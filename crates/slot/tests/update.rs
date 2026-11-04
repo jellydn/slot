@@ -596,16 +596,14 @@ fn clean_baseos_removes_only_our_stale_files() {
     }
 }
 
-fn ranged(
-    body: &[u8],
-    chunk: u64,
-    short_at: Option<u64>,
-) -> (
-    Result<[u8; 32], UpdateFail>,
-    Vec<u8>,
-    Vec<(u64, u64)>,
-    Vec<u64>,
-) {
+struct Download {
+    result: Result<[u8; 32], UpdateFail>,
+    bytes: Vec<u8>,
+    ranges: Vec<(u64, u64)>,
+    progress: Vec<u64>,
+}
+
+fn ranged(body: &[u8], chunk: u64, short_at: Option<u64>) -> Download {
     let mut asked = Vec::new();
     let mut out = Vec::new();
     let mut seen = Vec::new();
@@ -626,26 +624,31 @@ fn ranged(
         &mut out,
         &mut |got| seen.push(got),
     );
-    (result, out, asked, seen)
+    Download {
+        result,
+        bytes: out,
+        ranges: asked,
+        progress: seen,
+    }
 }
 
 #[test]
 fn a_ranged_download_asks_for_each_chunk_and_hashes_the_whole() {
     use sha2::Digest;
     let body: Vec<u8> = (0..10u8).collect();
-    let (result, out, asked, seen) = ranged(&body, 4, None);
-    assert_eq!(result, Ok(sha2::Sha256::digest(&body).into()));
-    assert_eq!(out, body);
-    assert_eq!(asked, [(0, 3), (4, 7), (8, 9)]);
-    assert_eq!(seen.last(), Some(&10));
+    let download = ranged(&body, 4, None);
+    assert_eq!(download.result, Ok(sha2::Sha256::digest(&body).into()));
+    assert_eq!(download.bytes, body);
+    assert_eq!(download.ranges, [(0, 3), (4, 7), (8, 9)]);
+    assert_eq!(download.progress.last(), Some(&10));
 }
 
 #[test]
 fn a_short_range_fails_the_download() {
     let body: Vec<u8> = (0..10u8).collect();
-    let (result, _, asked, _) = ranged(&body, 4, Some(4));
-    assert_eq!(result, Err(UpdateFail::Download));
-    assert_eq!(asked, [(0, 3), (4, 7)]);
+    let download = ranged(&body, 4, Some(4));
+    assert_eq!(download.result, Err(UpdateFail::Download));
+    assert_eq!(download.ranges, [(0, 3), (4, 7)]);
 }
 
 #[test]

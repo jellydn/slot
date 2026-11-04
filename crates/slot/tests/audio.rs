@@ -438,9 +438,12 @@ impl slot_power::Platform for PowerCut {
 
 #[test]
 fn the_speaker_is_let_go_before_the_power_is_cut() {
-    let cuts: [(&str, fn(&mut slot::frontend::Frontend)); 2] = [
-        ("power off", |f| f.poweroff()),
-        ("restart", |f| f.restart()),
+    let cuts = [
+        (
+            "power off",
+            slot::frontend::Frontend::poweroff as fn(&mut slot::frontend::Frontend),
+        ),
+        ("restart", slot::frontend::Frontend::restart),
     ];
     for (what, cut) in cuts {
         let d = tempfile::tempdir().unwrap();
