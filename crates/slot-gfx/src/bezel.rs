@@ -1,7 +1,11 @@
-use crate::surface::{OUT_H, OUT_W};
+use crate::surface::{blit_rect_fit, OUT_H, OUT_W};
 
 pub fn framed(panel: (u32, u32)) -> bool {
     panel.0 > 0 && panel.0 * 3 == panel.1 * 4
+}
+
+pub fn wide(panel: (u32, u32)) -> bool {
+    panel.1 > 0 && panel.0 * 9 == panel.1 * 16
 }
 
 pub fn screen_rect(panel: (u32, u32)) -> (i32, i32, i32, i32) {
@@ -11,7 +15,11 @@ pub fn screen_rect(panel: (u32, u32)) -> (i32, i32, i32, i32) {
 }
 
 pub fn game_rect(panel: (u32, u32), sp_frame: bool) -> (i32, i32, i32, i32) {
-    let (x, _, w, h) = screen_rect(panel);
+    let (x, _, w, h) = if wide(panel) {
+        blit_rect_fit(panel, 0.0)
+    } else {
+        screen_rect(panel)
+    };
     let gap = panel.1 as i32 - h;
     let y = match sp_frame {
         true => 0,

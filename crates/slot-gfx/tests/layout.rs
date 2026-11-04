@@ -50,6 +50,18 @@ fn the_game_area_on_a_4_by_3_panel_is_3_by_2_at_the_top_or_the_middle() {
 }
 
 #[test]
+fn the_canvas_on_a_16_by_9_panel_is_the_panel_at_480_lines() {
+    assert_eq!(Canvas::of((1280, 720)), Canvas { w: 853.0, h: 480.0 });
+    assert_eq!(Canvas::of((1920, 1080)), Canvas { w: 853.0, h: 480.0 });
+}
+
+#[test]
+fn the_game_area_on_a_16_by_9_panel_is_3_by_2_letterboxed() {
+    assert_eq!(game_rect((1280, 720), true), (100, 0, 1080, 720));
+    assert_eq!(game_rect((1280, 720), false), (100, 0, 1080, 720));
+}
+
+#[test]
 fn the_window_of_a_wider_texture_is_its_centre_and_a_fitting_one_is_whole() {
     let native = Canvas { w: 640.0, h: 480.0 };
     assert_eq!(

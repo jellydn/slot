@@ -8,7 +8,8 @@ use std::time::Instant;
 use slot_input::{Btn, InputSource, Millis, RawEvent};
 
 use super::evdev::{
-    decode, device_name, pick_devices, to_raw, Ev, Hat, EVENT_BYTES, EV_ABS, EV_KEY, EV_SYN,
+    decode, device_name, pad_map, pick_devices, to_raw, Ev, Hat, EVENT_BYTES, EV_ABS, EV_KEY,
+    EV_SYN,
 };
 use super::trace;
 
@@ -101,7 +102,7 @@ fn read_node(
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| node.display().to_string());
-    let mut hat = Hat::default();
+    let mut hat = Hat::for_map(pad_map());
     let mut file = match File::open(node) {
         Ok(f) => f,
         Err(e) => {

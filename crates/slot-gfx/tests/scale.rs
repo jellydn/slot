@@ -38,6 +38,12 @@ fn a_panel_smaller_than_the_composite_fits_rather_than_crops() {
 }
 
 #[test]
+fn a_fractional_uniform_scale_keeps_the_native_fbo() {
+    assert_eq!(slot_gfx::canvas_size((1280, 720)), (720, 480));
+    assert_eq!(slot_gfx::canvas_size((1440, 960)), (720, 480));
+}
+
+#[test]
 fn the_device_panel_takes_the_fit_and_a_desktop_window_does_not() {
     assert_eq!(blit_rect((600, 480), 0.0), blit_rect_fit((600, 480), 0.0));
     assert_eq!(blit_rect((1500, 1000), 0.0), fit_rect(1500, 1000));

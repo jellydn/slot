@@ -266,6 +266,48 @@ fn the_menu_buttons_second_code_is_swallowed() {
 }
 
 #[test]
+fn the_tsp_pad_maps_by_the_codes_trimui_sends() {
+    use slot::input::evdev::{code_to_btn_for, PadMap};
+    let expected = [
+        (0x130, Btn::A),
+        (0x131, Btn::B),
+        (0x133, Btn::Y),
+        (0x134, Btn::X),
+        (0x136, Btn::L1),
+        (0x137, Btn::R1),
+        (0x138, Btn::L2),
+        (0x139, Btn::R2),
+        (0x13a, Btn::Select),
+        (0x13b, Btn::Start),
+        (0x13c, Btn::Menu),
+        (114, Btn::VolDown),
+        (115, Btn::VolUp),
+        (116, Btn::Power),
+    ];
+    for (code, want) in expected {
+        assert_eq!(
+            code_to_btn_for(PadMap::Tsp, code),
+            Some(want),
+            "code {code:#x}"
+        );
+    }
+    for code in [0x132, 0x135, 0x162] {
+        assert_eq!(code_to_btn_for(PadMap::Tsp, code), None, "code {code:#x}");
+    }
+}
+
+#[test]
+fn the_pad_map_comes_from_the_board_name() {
+    use slot::input::evdev::{pad_map_from, PadMap};
+    for board in ["trimui-smart-pro", "trimui-brick", "tg5040"] {
+        assert_eq!(pad_map_from(board), PadMap::Tsp, "{board}");
+    }
+    for board in ["rgsp", "", "Trimui-smart-pro", "anbernic-rg35xx"] {
+        assert_eq!(pad_map_from(board), PadMap::Anbernic, "{board}");
+    }
+}
+
+#[test]
 fn the_d_pad_arrives_as_a_hat_rather_than_as_keys() {
     let mut hat = slot::input::evdev::Hat::default();
     let ev = |code, value| slot::input::evdev::Ev {
@@ -381,6 +423,15 @@ fn the_d_pad_held_through_a_stick_flick_stays_held() {
 }
 
 #[test]
+fn the_tsp_stick_presses_the_d_pad_on_its_own_axes() {
+    let mut hat = slot::input::evdev::Hat::for_map(slot::input::evdev::PadMap::Tsp);
+    hat.steer_with_stick(true);
+    assert_eq!(hat.feed(abs(0x00, 4096)), vec![RawEvent::Down(Btn::Right)]);
+    assert!(hat.feed(abs(0x02, 4096)).is_empty());
+    assert!(hat.feed(abs(0x05, 4096)).is_empty());
+}
+
+#[test]
 fn only_the_skus_nextui_lists_with_a_left_stick_have_one() {
     use slot::input::evdev::has_left_stick;
     for t in [
@@ -395,5 +446,19 @@ fn only_the_skus_nextui_lists_with_a_left_stick_have_one() {
     }
     for t in ["rgsp", "rg35xxsp", "rg35xxplus", "rg34xx", "rg28xx", ""] {
         assert!(!has_left_stick(t), "{t}");
+    }
+}
+
+#[test]
+fn the_trimui_boards_with_a_stick_have_one() {
+    use slot::input::evdev::has_left_stick;
+    for t in [
+        "trimui-smart-pro",
+        "trimui-brick",
+        "trimui-brick-pro",
+        "trimui-smart-pro-s",
+        "tg5040",
+    ] {
+        assert!(has_left_stick(t), "{t}");
     }
 }

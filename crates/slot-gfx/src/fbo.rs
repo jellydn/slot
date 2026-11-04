@@ -248,7 +248,7 @@ impl Compositor {
     }
 
     fn native(&self) -> bool {
-        crate::bezel::framed(self.window)
+        crate::bezel::framed(self.window) || crate::bezel::wide(self.window)
     }
 
     fn resize(&mut self, size: (u32, u32)) {
@@ -485,7 +485,7 @@ impl Compositor {
         if !self.native() {
             return draw(self);
         }
-        let (x, top, w, h) = match self.game_panel {
+        let (x, top, w, h) = match self.game_panel && !crate::bezel::wide(self.window) {
             true => (0, 0, self.window.0 as i32, self.window.1 as i32),
             false => crate::bezel::game_rect(self.window, self.sp_frame),
         };
@@ -515,7 +515,7 @@ impl Compositor {
 pub fn canvas_size(window: (u32, u32)) -> (u32, u32) {
     let (_, _, w, h) = blit_rect(window, 0.0);
     let (w, h) = (w.max(1) as u32, h.max(1) as u32);
-    if w % OUT_W == 0 && h % OUT_H == 0 && w / OUT_W == h / OUT_H {
+    if w as u64 * OUT_H as u64 == h as u64 * OUT_W as u64 {
         (OUT_W, OUT_H)
     } else {
         (w, h)

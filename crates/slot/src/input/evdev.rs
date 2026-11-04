@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use slot_input::{Btn, RawEvent};
 
@@ -10,6 +11,8 @@ pub const EV_SW: u16 = 0x05;
 pub const SW_LID: u16 = 0x00;
 
 pub const EV_ABS: u16 = 0x03;
+pub const ABS_X: u16 = 0x00;
+pub const ABS_Y: u16 = 0x01;
 pub const ABS_HAT0X: u16 = 0x10;
 pub const ABS_HAT0Y: u16 = 0x11;
 pub const ABS_LSX: u16 = 0x02;
@@ -17,27 +20,80 @@ pub const ABS_LSY: u16 = 0x03;
 
 pub const STICK_DEADZONE: i32 = 2048;
 
-const LEFT_STICK_TARGETS: [&str; 6] = [
+const LEFT_STICK_TARGETS: [&str; 11] = [
     "rg34xxsp",
     "rg35xxh",
     "rg35xxpro",
     "rg40xxh",
     "rg40xxv",
     "rgcubexx",
+    "trimui-smart-pro",
+    "trimui-brick",
+    "trimui-brick-pro",
+    "trimui-smart-pro-s",
+    "tg5040",
 ];
 
 pub fn has_left_stick(target: &str) -> bool {
     LEFT_STICK_TARGETS.contains(&target)
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+pub enum PadMap {
+    #[default]
+    Anbernic,
+    Tsp,
+}
+
+pub fn knulli_board() -> Option<String> {
+    std::fs::read_to_string("/boot/boot/knulli.board")
+        .ok()
+        .map(|b| b.trim().to_string())
+}
+
+pub fn pad_map_from(board: &str) -> PadMap {
+    if board.starts_with("trimui-") || board == "tg5040" {
+        PadMap::Tsp
+    } else {
+        PadMap::Anbernic
+    }
+}
+
+pub fn detect_pad_map() -> PadMap {
+    for key in ["SLOT_BOARD", "BASEOS_TARGET"] {
+        if let Some(board) = std::env::var(key).ok().map(|b| b.trim().to_string()) {
+            if !board.is_empty() {
+                return pad_map_from(&board);
+            }
+        }
+    }
+    match knulli_board() {
+        Some(board) => pad_map_from(&board),
+        None => PadMap::Anbernic,
+    }
+}
+
+pub fn pad_map() -> PadMap {
+    static MAP: OnceLock<PadMap> = OnceLock::new();
+    *MAP.get_or_init(detect_pad_map)
+}
+
 #[derive(Default)]
 pub struct Hat {
+    map: PadMap,
     hat: [i32; 2],
     stick: [i32; 2],
     steers: bool,
 }
 
 impl Hat {
+    pub fn for_map(map: PadMap) -> Self {
+        Hat {
+            map,
+            ..Hat::default()
+        }
+    }
+
     pub fn steer_with_stick(&mut self, on: bool) {
         self.steers = on;
     }
@@ -49,11 +105,15 @@ impl Hat {
             _ => 0,
         };
         let steer = |v: i32| if self.steers { tilt(v) } else { 0 };
+        let (lsx, lsy) = match self.map {
+            PadMap::Anbernic => (ABS_LSX, ABS_LSY),
+            PadMap::Tsp => (ABS_X, ABS_Y),
+        };
         let (axis, from_stick, value) = match ev.code {
             ABS_HAT0X => (0, false, ev.value.signum()),
             ABS_HAT0Y => (1, false, ev.value.signum()),
-            ABS_LSX => (0, true, steer(ev.value)),
-            ABS_LSY => (1, true, steer(ev.value)),
+            c if c == lsx => (0, true, steer(ev.value)),
+            c if c == lsy => (1, true, steer(ev.value)),
             _ => return Vec::new(),
         };
         let was = self.held(axis);
@@ -115,28 +175,51 @@ pub fn to_raw(ev: Ev) -> Option<RawEvent> {
 }
 
 pub fn code_to_btn(code: u16) -> Option<Btn> {
-    Some(match code {
-        0x130 => Btn::A,
-        0x131 => Btn::B,
-        0x132 => Btn::Y,
-        0x133 => Btn::X,
-        0x134 => Btn::L1,
-        0x135 => Btn::R1,
-        0x136 => Btn::Select,
-        0x137 => Btn::Start,
-        0x138 => Btn::Menu,
-        0x13a => Btn::L2,
-        0x13b => Btn::R2,
-        115 => Btn::VolUp,
-        114 => Btn::VolDown,
-        116 => Btn::Power,
-        _ => return None,
+    code_to_btn_for(pad_map(), code)
+}
+
+pub fn code_to_btn_for(map: PadMap, code: u16) -> Option<Btn> {
+    Some(match map {
+        PadMap::Anbernic => match code {
+            0x130 => Btn::A,
+            0x131 => Btn::B,
+            0x132 => Btn::Y,
+            0x133 => Btn::X,
+            0x134 => Btn::L1,
+            0x135 => Btn::R1,
+            0x136 => Btn::Select,
+            0x137 => Btn::Start,
+            0x138 => Btn::Menu,
+            0x13a => Btn::L2,
+            0x13b => Btn::R2,
+            115 => Btn::VolUp,
+            114 => Btn::VolDown,
+            116 => Btn::Power,
+            _ => return None,
+        },
+        PadMap::Tsp => match code {
+            0x130 => Btn::A,
+            0x131 => Btn::B,
+            0x133 => Btn::Y,
+            0x134 => Btn::X,
+            0x136 => Btn::L1,
+            0x137 => Btn::R1,
+            0x138 => Btn::L2,
+            0x139 => Btn::R2,
+            0x13a => Btn::Select,
+            0x13b => Btn::Start,
+            0x13c => Btn::Menu,
+            114 => Btn::VolDown,
+            115 => Btn::VolUp,
+            116 => Btn::Power,
+            _ => return None,
+        },
     })
 }
 
-const WANTED: [u16; 15] = [
-    0x130, 0x131, 0x132, 0x133, 0x134, 0x135, 0x136, 0x137, 0x138, 0x13a, 0x13b, 0x162, 115, 114,
-    116,
+const WANTED: [u16; 17] = [
+    0x130, 0x131, 0x132, 0x133, 0x134, 0x135, 0x136, 0x137, 0x138, 0x139, 0x13a, 0x13b, 0x13c,
+    0x162, 115, 114, 116,
 ];
 
 pub use slot_power::has_bit;

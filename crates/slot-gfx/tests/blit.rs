@@ -47,6 +47,19 @@ fn a_4_by_3_panel_fills_its_width_from_the_top() {
 }
 
 #[test]
+fn a_wide_panel_is_16_by_9() {
+    assert!(slot_gfx::wide((1280, 720)));
+    assert!(slot_gfx::wide((1920, 1080)));
+    assert!(!slot_gfx::wide((720, 480)));
+    assert!(!slot_gfx::wide((640, 480)));
+}
+
+#[test]
+fn a_wide_panel_fits_fractionally_with_side_bars() {
+    assert_eq!(blit_rect((1280, 720), 0.0), (100, 0, 1080, 720));
+}
+
+#[test]
 fn the_overlay_drops_by_the_strip_when_it_slides_away() {
     assert_eq!(slot_gfx::lifted_rect((640, 480), 0.0), (0, 53, 640, 427));
     assert_eq!(slot_gfx::lifted_rect((640, 480), 1.0), (0, 0, 640, 427));

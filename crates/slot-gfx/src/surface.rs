@@ -59,7 +59,7 @@ pub fn blit_rect(window: (u32, u32), shake: f32) -> (i32, i32, i32, i32) {
         let dx = shake * w as f32 / OUT_W as f32;
         return (x + dx.round() as i32, window.1 as i32 - y - h, w, h);
     }
-    if window.0 < OUT_W || window.1 < OUT_H {
+    if window.0 < OUT_W || window.1 < OUT_H || crate::bezel::wide(window) {
         return blit_rect_fit(window, shake);
     }
     let (x, y, w, h) = fit_rect(window.0, window.1);

@@ -130,7 +130,13 @@ pub fn run() {
     let mut frontend = Frontend::boot_with(Box::new(platform), sink);
     slot::boot_time::mark("frontend");
     let target = slot::baseos::var("BASEOS_TARGET").unwrap_or_default();
-    frontend.set_left_stick(slot::input::evdev::has_left_stick(&target));
+    let target = target.trim();
+    let board = if target.is_empty() {
+        slot::input::evdev::knulli_board().unwrap_or_default()
+    } else {
+        target.to_string()
+    };
+    frontend.set_left_stick(slot::input::evdev::has_left_stick(&board));
     frontend.upload_boot_faces(&mut compositor);
     slot::boot_time::mark("faces");
     frontend.upload_bezel(&mut compositor, window);
