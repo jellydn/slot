@@ -648,9 +648,10 @@ fn tools_shows_the_message_when_not_connected() {
     press(&mut a, Btn::A);
     assert_eq!(a.quick_menu(), Some(QuickRow::Network));
     assert_eq!(a.update_text().map(|t| t.0), Some(NO_NETWORK.to_string()));
-    assert!(QuickRow::NETWORK
+    assert!(QuickRow::NETWORK.iter().all(|r| QuickRow::Network
+        .shown(&a.hidden_rows())
         .iter()
-        .all(|r| QuickRow::Network.shown(&a.hidden_rows()).iter().all(|s| s != r)));
+        .all(|s| s != r)));
 }
 
 #[test]
@@ -678,7 +679,9 @@ fn no_wifi_hardware_hides_tools_and_wifi() {
     let hidden = a.hidden_rows();
     assert!(hidden.contains(&QuickRow::Network));
     assert!(hidden.contains(&QuickRow::Wifi));
-    assert!(!QuickRow::MAIN.iter().any(|r| *r != QuickRow::Network && hidden.contains(r)));
+    assert!(!QuickRow::MAIN
+        .iter()
+        .any(|r| *r != QuickRow::Network && hidden.contains(r)));
 }
 
 #[test]

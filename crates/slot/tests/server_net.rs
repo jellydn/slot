@@ -115,7 +115,9 @@ fn ignores_malformed_packets() {
 #[test]
 fn compressed_name_pointing_forward_is_followed() {
     let mut p = vec![0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0];
-    p.extend_from_slice(&[4, b's', b'l', b'o', b't', 0xc0, 23, 0, 1, 0, 1, 5, b'l', b'o', b'c', b'a', b'l', 0]);
+    p.extend_from_slice(&[
+        4, b's', b'l', b'o', b't', 0xc0, 23, 0, 1, 0, 1, 5, b'l', b'o', b'c', b'a', b'l', 0,
+    ]);
     assert!(answer(&p, IP, HOST).is_some());
 }
 

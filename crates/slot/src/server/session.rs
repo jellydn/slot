@@ -13,7 +13,9 @@ use slot_ui::ReceiptText;
 
 use super::{generate_pin, qr_modules, qr_url, shown_address, wifi_ip, Responder, Server, PORTS};
 use crate::label_cache::fresh;
-use crate::print_scene::{Cue, PaperJob, PrintArtState, PrintArtWorker, PrintFrame, PrintScene, PrintTextures};
+use crate::print_scene::{
+    Cue, PaperJob, PrintArtState, PrintArtWorker, PrintFrame, PrintScene, PrintTextures,
+};
 
 pub const NO_WIFI: &str = "NO WI-FI";
 pub const SERVER_FAILED: &str = "GAMEBIT FAILED";
@@ -131,7 +133,11 @@ fn bring_up(root: PathBuf, net: ServerNet) -> Up {
         },
         job: PaperJob::Code {
             modules,
-            text: ReceiptText { host, ip: shown, pin },
+            text: ReceiptText {
+                host,
+                ip: shown,
+                pin,
+            },
         },
     }
 }
@@ -212,7 +218,11 @@ impl ServerSession {
                 Err(TryRecvError::Empty) => {}
             }
         }
-        if self.stop_asked && self.rising.is_none() && self.stopped.is_none() && self.stopping.is_none() {
+        if self.stop_asked
+            && self.rising.is_none()
+            && self.stopped.is_none()
+            && self.stopping.is_none()
+        {
             self.begin_stop();
         }
         if let Some(stopping) = &self.stopping {
@@ -300,7 +310,8 @@ impl ServerSession {
         self.art = None;
         if let Some(mut scene) = self.scene.take() {
             scene.stop(now);
-            self.owed.extend(scene.cues(now).into_iter().filter(|c| *c == Cue::BuzzOff));
+            self.owed
+                .extend(scene.cues(now).into_iter().filter(|c| *c == Cue::BuzzOff));
         }
     }
 

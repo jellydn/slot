@@ -203,7 +203,9 @@ fn setting(toast: Toast) -> Setting {
         },
         false => Setting {
             w: match (toast.icon(), toast) {
-                (Some(_), _) | (_, Toast::NeedsMgba | Toast::NoWifi | Toast::PeerEnded) => WARNING_W,
+                (Some(_), _) | (_, Toast::NeedsMgba | Toast::NoWifi | Toast::PeerEnded) => {
+                    WARNING_W
+                }
                 _ => TOAST_W,
             },
             h: TOAST_H,

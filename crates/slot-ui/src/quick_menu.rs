@@ -502,10 +502,9 @@ impl QuickRow {
             | QuickRow::LidOff
             | QuickRow::Wifi => &QuickRow::GENERAL,
             QuickRow::WifiPower | QuickRow::Networks => &QuickRow::WIFI,
-            QuickRow::CheckUpdates
-            | QuickRow::FetchArt
-            | QuickRow::Romm
-            | QuickRow::Server => &QuickRow::NETWORK,
+            QuickRow::CheckUpdates | QuickRow::FetchArt | QuickRow::Romm | QuickRow::Server => {
+                &QuickRow::NETWORK
+            }
             QuickRow::RommProtocol
             | QuickRow::RommServer
             | QuickRow::RommPort
@@ -1363,7 +1362,11 @@ pub fn print_stop_legend(ink: [u8; 3]) -> UndoFace {
     let (src, w, h) = button_legend(ButtonLegend::B);
     let side = PRINT_STOP_BUTTON;
     let rgba = crate::art::cover_rgba(src, w, h, side, side).unwrap_or_default();
-    let button = UndoFace { rgba, w: side, h: side };
+    let button = UndoFace {
+        rgba,
+        w: side,
+        h: side,
+    };
     with_hint(button, "Stop", Some(ink), true)
 }
 
@@ -1383,7 +1386,12 @@ pub enum StudioGlyph {
     UpDown,
 }
 
-pub fn studio_legend(glyph: StudioGlyph, word: &str, ink: [u8; 3], hint_on_right: bool) -> UndoFace {
+pub fn studio_legend(
+    glyph: StudioGlyph,
+    word: &str,
+    ink: [u8; 3],
+    hint_on_right: bool,
+) -> UndoFace {
     let button = match glyph {
         StudioGlyph::A => button_face(ButtonLegend::A),
         StudioGlyph::B => button_face(ButtonLegend::B),

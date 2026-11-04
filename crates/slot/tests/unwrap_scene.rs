@@ -101,5 +101,8 @@ fn a_box_face_is_the_same_each_build() {
     let a = box_face(&art, Platform::Gba, "Emerald");
     assert_eq!(a, box_face(&art, Platform::Gba, "Emerald"));
     let (w, h) = box_size(Platform::Gb);
-    assert_eq!(box_face(&art, Platform::Gb, "Tetris").len(), (w * h * 4) as usize);
+    assert_eq!(
+        box_face(&art, Platform::Gb, "Tetris").len(),
+        (w * h * 4) as usize
+    );
 }

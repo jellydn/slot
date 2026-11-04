@@ -21,8 +21,13 @@ use slot_ui::{
     GBA_SEATS, HINT_EDGE, HOP_LIFT, MOUTH_H, REPEAT_DELAY_MS, SHADOW_H, SHADOW_W, TURN_PAD,
 };
 
+use crate::art::jobs::{no_art_jobs, ArtEvent, ArtJob, ArtJobs};
+use crate::art::make::Kind as ArtKind;
 use crate::audio::Sfx;
 use crate::core_picker::{Chip, CorePicker, Outcome, Press};
+use crate::fetch_art::{
+    stage_at, FetchArt, FetchTex, Landed as ArtLanded, Run as ArtRun, Scene as ArtScene, Stage,
+};
 use crate::link_kind::{link_carried, link_dual, link_kind, serial_option, LinkKind};
 use crate::link_radio::{radio_jobs, LinkRole, RadioJob, RadioJobs};
 use crate::link_screen::LinkSprites;
@@ -30,12 +35,9 @@ use crate::link_start::{link_port, LinkFail, LinkProgress, LinkStarter, LinkStep
 use crate::loading_mark::LoadingMark;
 use crate::persist::{self, Snapshot};
 use crate::print_scene::{print_draws, Cue, PrintArtState, PrintFrame, PrintTextures};
-use crate::unwrap_scene::{unwrap_draws, UnwrapScene, UnwrapTextures};
-use crate::server::{ServerNet, ServerPaper, ServerSession};
-use crate::art::jobs::{no_art_jobs, ArtEvent, ArtJob, ArtJobs};
 use crate::romm::{no_romm_jobs, PairFail, RommEvent, RommJob, RommJobs};
-use crate::art::make::Kind as ArtKind;
-use crate::fetch_art::{stage_at, FetchArt, FetchTex, Landed as ArtLanded, Run as ArtRun, Scene as ArtScene, Stage};
+use crate::server::{ServerNet, ServerPaper, ServerSession};
+use crate::unwrap_scene::{unwrap_draws, UnwrapScene, UnwrapTextures};
 use crate::update::{
     no_update_jobs, Kind, Release, UpdateEvent, UpdateFail, UpdateJob, UpdateJobs,
 };
@@ -1229,7 +1231,9 @@ impl App {
                     self.held_dir = Some((b, self.now() + REPEAT_DELAY_MS, 0));
                 }
             }
-            Action::GbaDown(b @ (Btn::A | Btn::B | Btn::L1 | Btn::R1)) if self.keyboard.is_some() => {
+            Action::GbaDown(b @ (Btn::A | Btn::B | Btn::L1 | Btn::R1))
+                if self.keyboard.is_some() =>
+            {
                 if self.held_dir.map(|(held, ..)| held) != Some(b) {
                     self.held_dir = Some((b, self.now() + REPEAT_DELAY_MS, 0));
                 }
@@ -5258,8 +5262,12 @@ impl App {
                     }
                     _ => {
                         if !self.draw_unwrap(out) {
-                            self.shelf()
-                                .draw(self.canvas(), self.shelf_shake(), self.slot_faces, out);
+                            self.shelf().draw(
+                                self.canvas(),
+                                self.shelf_shake(),
+                                self.slot_faces,
+                                out,
+                            );
                         }
                         slot_ui::draw_slot_title(
                             self.canvas(),
@@ -5783,22 +5791,13 @@ impl App {
         self.core_chip_shadow_face = Some(shadow);
     }
 
-    pub fn set_core_gb_part_faces(
-        &mut self,
-        sockets: Vec<TexId>,
-        chips: Vec<TexId>,
-        blank: TexId,
-    ) {
+    pub fn set_core_gb_part_faces(&mut self, sockets: Vec<TexId>, chips: Vec<TexId>, blank: TexId) {
         self.core_gb_socket_faces = sockets;
         self.core_gb_chip_faces = chips;
         self.core_gb_blank_chip_face = Some(blank);
     }
 
-    pub fn set_core_legend_faces(
-        &mut self,
-        dark: Vec<(TexId, u32)>,
-        light: Vec<(TexId, u32)>,
-    ) {
+    pub fn set_core_legend_faces(&mut self, dark: Vec<(TexId, u32)>, light: Vec<(TexId, u32)>) {
         self.core_legend_faces = [dark, light];
     }
 
@@ -6526,11 +6525,16 @@ impl App {
         let wifi = self.wifi_up();
         let shelf = self.shelf();
         let picked = shelf.carts.get(shelf.index).cloned();
-        if picked.as_ref().is_some_and(|c| self.studio_saving.as_deref() == Some(c.stem.as_str())) {
+        if picked
+            .as_ref()
+            .is_some_and(|c| self.studio_saving.as_deref() == Some(c.stem.as_str()))
+        {
             return;
         }
         let face = shelf.face(shelf.index);
-        let under = picked.as_ref().map_or([None; 2], |cart| shelf.behind(&cart.stem));
+        let under = picked
+            .as_ref()
+            .map_or([None; 2], |cart| shelf.behind(&cart.stem));
         if let Some(cart) = picked {
             self.studio_from = crate::studio_view::shelf_rect(self.canvas().w, &cart);
             self.studio_shelf_face = face;
@@ -6614,7 +6618,10 @@ impl App {
             self.wifi_wanted_at = Some(now + WIFI_RETRY_MS);
         }
         if let Phase::QuickMenu { row } = self.phase {
-            if (row.page() == QuickRow::NETWORK || row.page() == QuickRow::ROMM) && self.update.is_none() && !self.wifi_up() {
+            if (row.page() == QuickRow::NETWORK || row.page() == QuickRow::ROMM)
+                && self.update.is_none()
+                && !self.wifi_up()
+            {
                 self.keyboard = None;
                 self.phase = Phase::QuickMenu {
                     row: QuickRow::Network,
@@ -6905,10 +6912,15 @@ impl App {
         wanted
     }
 
-    pub fn set_studio_text(&mut self, key: (String, crate::studio_view::Style), face: (TexId, u32, u32)) {
+    pub fn set_studio_text(
+        &mut self,
+        key: (String, crate::studio_view::Style),
+        face: (TexId, u32, u32),
+    ) {
         if key.0.len() == 7 && key.0.starts_with('#') {
             if let Some(old) = self.studio_hex.replace(key.clone()) {
-                self.orphaned.extend(self.studio_text.remove(&old).map(|f| f.0));
+                self.orphaned
+                    .extend(self.studio_text.remove(&old).map(|f| f.0));
             }
         }
         self.studio_text.insert(key, face);
@@ -6961,7 +6973,14 @@ impl App {
             Align::Center => x - w / 2.0,
             Align::Right => x - w + pad,
         };
-        out.push(Draw::Tex { x: x.floor(), y, w, h, tex, alpha });
+        out.push(Draw::Tex {
+            x: x.floor(),
+            y,
+            w,
+            h,
+            tex,
+            alpha,
+        });
     }
 
     fn draw_studio(&self, out: &mut Vec<Draw>) {
@@ -6975,9 +6994,14 @@ impl App {
         let since = self.studio_closing.unwrap_or(self.studio_opened);
         let t = (self.now().saturating_sub(since) as f32 / STUDIO_SLIDE_MS).min(1.0);
         if self.studio_closing.is_some() || t < 1.0 {
-            let e = if self.studio_closing.is_some() { 1.0 - ease(t) } else { ease(t) };
+            let e = if self.studio_closing.is_some() {
+                1.0 - ease(t)
+            } else {
+                ease(t)
+            };
             self.draw_background(out);
-            self.shelf().draw_row(canvas, Some(&studio.cart.stem), 0.0, 0.0, 1.0, out);
+            self.shelf()
+                .draw_row(canvas, Some(&studio.cart.stem), 0.0, 0.0, 1.0, out);
             self.draw_studio_ground((e - 1.0) * OUT_H as f32, out);
             self.draw_studio_cart(out);
             return draw_empty_slot(canvas, self.slot_faces, out);
@@ -6986,18 +7010,39 @@ impl App {
             match item {
                 Item::Cart => self.draw_studio_cart(out),
                 Item::Sheet => self.draw_studio_sheet(out),
-                Item::Text { text, style, align, x, y, alpha, scale } => {
-                    self.studio_put_text(text, *style, *align, *x, *y, *alpha, *scale, out)
-                }
-                Item::Rect { x, y, w, h, color } => {
-                    out.push(Draw::Rect { x: *x, y: *y, w: *w, h: *h, colour: *color })
-                }
-                Item::Chip { cell, row, x, y, selected } => {
-                    self.draw_studio_chip(*cell, *row, *x, *y, *selected, out)
-                }
+                Item::Text {
+                    text,
+                    style,
+                    align,
+                    x,
+                    y,
+                    alpha,
+                    scale,
+                } => self.studio_put_text(text, *style, *align, *x, *y, *alpha, *scale, out),
+                Item::Rect { x, y, w, h, color } => out.push(Draw::Rect {
+                    x: *x,
+                    y: *y,
+                    w: *w,
+                    h: *h,
+                    colour: *color,
+                }),
+                Item::Chip {
+                    cell,
+                    row,
+                    x,
+                    y,
+                    selected,
+                } => self.draw_studio_chip(*cell, *row, *x, *y, *selected, out),
                 Item::Dot { x, y, size, alpha } => {
                     if let Some(disc) = self.studio_disc {
-                        out.push(Draw::Tex { x: *x, y: *y, w: *size, h: *size, tex: disc, alpha: *alpha });
+                        out.push(Draw::Tex {
+                            x: *x,
+                            y: *y,
+                            w: *size,
+                            h: *size,
+                            tex: disc,
+                            alpha: *alpha,
+                        });
                     }
                 }
             }
@@ -7013,7 +7058,15 @@ impl App {
         self.draw_studio_legends(studio, out);
     }
 
-    fn draw_studio_chip(&self, cell: u32, row: u32, x: f32, y: f32, selected: bool, out: &mut Vec<Draw>) {
+    fn draw_studio_chip(
+        &self,
+        cell: u32,
+        row: u32,
+        x: f32,
+        y: f32,
+        selected: bool,
+        out: &mut Vec<Draw>,
+    ) {
         let Some((tex, w, h)) = self.studio_chips else {
             return;
         };
@@ -7021,7 +7074,14 @@ impl App {
         let grow = if selected { 3.0 } else { 0.0 };
         if let (true, Some(disc)) = (selected, self.studio_disc) {
             let ring = size + 2.0 * grow + 6.0;
-            out.push(Draw::Tex { x: x - grow - 3.0, y: y - grow - 3.0, w: ring, h: ring, tex: disc, alpha: 1.0 });
+            out.push(Draw::Tex {
+                x: x - grow - 3.0,
+                y: y - grow - 3.0,
+                w: ring,
+                h: ring,
+                tex: disc,
+                alpha: 1.0,
+            });
         }
         let cell_w = crate::studio_faces::CHIP as f32 / w as f32;
         let cell_h = crate::studio_faces::CHIP as f32 / h as f32;
@@ -7069,7 +7129,14 @@ impl App {
         let gap = (self.canvas().w - total) / (faces.len() + 1) as f32;
         let mut x = gap;
         for (tex, w) in faces {
-            out.push(Draw::Tex { x: x.floor(), y: LINK_LEGEND_Y, w: w as f32, h: MOUTH_H, tex, alpha: 1.0 });
+            out.push(Draw::Tex {
+                x: x.floor(),
+                y: LINK_LEGEND_Y,
+                w: w as f32,
+                h: MOUTH_H,
+                tex,
+                alpha: 1.0,
+            });
             x += w as f32 + gap;
         }
     }
@@ -7077,14 +7144,22 @@ impl App {
     fn draw_studio_cart(&self, out: &mut Vec<Draw>) {
         let since = self.studio_closing.unwrap_or(self.studio_opened);
         let t = (self.now().saturating_sub(since) as f32 / STUDIO_SLIDE_MS).min(1.0);
-        let e = if self.studio_closing.is_some() { 1.0 - ease(t) } else { ease(t) };
+        let e = if self.studio_closing.is_some() {
+            1.0 - ease(t)
+        } else {
+            ease(t)
+        };
         let (from, to) = (self.studio_from, self.studio_cart_rect());
         let at = |i: usize| from[i] + (to[i] - from[i]) * e;
         let rect = [at(0), at(1), at(2), at(3)];
         let centre = [rect[0] + rect[2] / 2.0, rect[1] + rect[3] / 2.0];
-        let corners =
-            crate::studio_view::turned(rect, centre, crate::studio_view::CART_TILT * e);
-        let quad = |tex: TexId| Draw::Quad { corners, tex, uv: [0.0, 0.0, 1.0, 1.0], alpha: 1.0 };
+        let corners = crate::studio_view::turned(rect, centre, crate::studio_view::CART_TILT * e);
+        let quad = |tex: TexId| Draw::Quad {
+            corners,
+            tex,
+            uv: [0.0, 0.0, 1.0, 1.0],
+            alpha: 1.0,
+        };
         let Some(tex) = &self.studio_tex else {
             for under in self.studio_shelf_under.into_iter().flatten() {
                 out.push(quad(under));
@@ -7133,7 +7208,12 @@ impl App {
                     ],
                 ),
             };
-            out.push(Draw::Quad { corners: strip.corners, tex: t, uv, alpha: 1.0 });
+            out.push(Draw::Quad {
+                corners: strip.corners,
+                tex: t,
+                uv,
+                alpha: 1.0,
+            });
         }
     }
 
@@ -7166,7 +7246,13 @@ impl App {
         let cart = crate::studio_view::turned([x, y, w, h], centre, tilt);
         let seat = crate::studio_view::turned(rect, centre, tilt)[0];
         let (dx, dy) = (seat[0] - rect[0], seat[1] - rect[1]);
-        let seated = Pose { x: dx, y: dy, z: 0.0, turn_deg: tilt, scale: 1.0 };
+        let seated = Pose {
+            x: dx,
+            y: dy,
+            z: 0.0,
+            turn_deg: tilt,
+            scale: 1.0,
+        };
         let pose_at = |p: f32| {
             let arc = (p * std::f32::consts::PI).sin();
             Pose {
@@ -7183,7 +7269,12 @@ impl App {
             return;
         };
         if !top {
-            out.push(Draw::Quad { corners: cart, tex: tex.bare, uv: [0.0, 0.0, 1.0, 1.0], alpha: 1.0 });
+            out.push(Draw::Quad {
+                corners: cart,
+                tex: tex.bare,
+                uv: [0.0, 0.0, 1.0, 1.0],
+                alpha: 1.0,
+            });
             return;
         }
         let stick = |t: TexId, flat: f32, curl: f32, pose: Pose, out: &mut Vec<Draw>| {
@@ -7214,7 +7305,13 @@ impl App {
     fn draw_studio_ground(&self, top: f32, out: &mut Vec<Draw>) {
         let w = self.canvas().w;
         let h = OUT_H as f32;
-        out.push(Draw::Rect { x: 0.0, y: top, w, h, colour: [0.122, 0.267, 0.216, 1.0] });
+        out.push(Draw::Rect {
+            x: 0.0,
+            y: top,
+            w,
+            h,
+            colour: [0.122, 0.267, 0.216, 1.0],
+        });
         let line = |x: f32, y: f32, w: f32, h: f32, a: f32| Draw::Rect {
             x,
             y,
@@ -7254,7 +7351,14 @@ impl App {
             h,
             colour: [0.0, 0.0, 0.0, 0.4],
         });
-        out.push(Draw::Tex { x, y, w, h, tex: liner, alpha: 1.0 });
+        out.push(Draw::Tex {
+            x,
+            y,
+            w,
+            h,
+            tex: liner,
+            alpha: 1.0,
+        });
         let (Some(kind), Some(tex)) = (kind, &self.studio_tex) else {
             return;
         };
@@ -7332,7 +7436,11 @@ impl App {
             rest(out);
         }
         for slip in slips().filter(|s| held(s)) {
-            let zoom = if piled { 1.0 } else { crate::studio::slip_zoom(elapsed) };
+            let zoom = if piled {
+                1.0
+            } else {
+                crate::studio::slip_zoom(elapsed)
+            };
             let (w, h) = (t.slip_w * zoom, t.slip_h * zoom);
             let x = t.x - apart - (w - t.slip_w) / 2.0;
             let y = TRAY_TOP + slip.y(now) - (h - t.slip_h) / 2.0;
@@ -7361,8 +7469,8 @@ impl App {
             self.draw_slip(kind, TRAY_TOP + scene.used_y, shift, 1.0, out);
         }
         let printing = self.studio_slips.iter().find(|s| s.printing(now));
-        let travel = self.studio_prints as f32 * t.slip_h
-            + printing.map_or(0.0, |s| s.y(now) - s.y1);
+        let travel =
+            self.studio_prints as f32 * t.slip_h + printing.map_or(0.0, |s| s.y(now) - s.y1);
         if let Some(liner) = self.studio_liner {
             let tile = 60.0 / 121.0;
             out.push(Draw::Part {
@@ -7372,11 +7480,22 @@ impl App {
                 h: 24.0,
                 tex: liner,
                 alpha: 1.0,
-                uv: [0.0, 1.0 - tile - (travel.rem_euclid(60.0) / 121.0), 1.0, 24.0 / 121.0],
+                uv: [
+                    0.0,
+                    1.0 - tile - (travel.rem_euclid(60.0) / 121.0),
+                    1.0,
+                    24.0 / 121.0,
+                ],
             });
         }
         let (px, pw) = (t.printer_x, t.printer_w);
-        out.push(Draw::Rect { x: px, y: 20.0, w: pw, h: 34.0, colour: [0.0, 0.0, 0.0, 0.45] });
+        out.push(Draw::Rect {
+            x: px,
+            y: 20.0,
+            w: pw,
+            h: 34.0,
+            colour: [0.0, 0.0, 0.0, 0.45],
+        });
         if let Some(body) = self.studio_printer {
             out.push(Draw::Part {
                 x: px,
@@ -7450,7 +7569,12 @@ impl App {
     }
 
     fn finish_studio_write(&mut self, wait: bool) {
-        if !wait && self.studio_write.as_ref().is_some_and(|w| !w.0.is_finished()) {
+        if !wait
+            && self
+                .studio_write
+                .as_ref()
+                .is_some_and(|w| !w.0.is_finished())
+        {
             return;
         }
         let Some((write, undo)) = self.studio_write.take() else {
@@ -7483,7 +7607,9 @@ impl App {
             if studio.recolored() && studio.wearing_text() {
                 let mut edited = studio.cart.clone();
                 edited.shell = studio.shell;
-                let png = studio.ground.map(|c| crate::art::make::text_label(&edited, c));
+                let png = studio
+                    .ground
+                    .map(|c| crate::art::make::text_label(&edited, c));
                 let path = crate::art::make::label_path(&root, &studio.cart);
                 let _ = match &png {
                     Some(png) => crate::art::make::relabel(&root, &studio.cart, png),
@@ -7517,7 +7643,11 @@ impl App {
         }
         let now = self.now();
         let (last, at, run) = self.studio_repeat;
-        let run = if last == Some(btn) && now.saturating_sub(at) < 300 { run + 1 } else { 0 };
+        let run = if last == Some(btn) && now.saturating_sub(at) < 300 {
+            run + 1
+        } else {
+            0
+        };
         self.studio_repeat = (Some(btn), now, run);
         let Some(studio) = &mut self.studio else {
             return;
@@ -7693,7 +7823,10 @@ impl App {
 
     pub fn fetch_featured_ready(&self) -> bool {
         match &self.fetch_art {
-            Some(FetchArt::Summary { featured: Some(cart), .. }) => self
+            Some(FetchArt::Summary {
+                featured: Some(cart),
+                ..
+            }) => self
                 .fetch_tex
                 .iter()
                 .any(|(p, s, _)| *p == cart.platform && *s == cart.stem),
@@ -7792,10 +7925,22 @@ impl App {
         let top = ((room - (2.0 * LINE_H + BAR_H + 2.0 * GAP)) / 2.0).floor();
         let (x, y) = ((mid - BAR_W / 2.0).floor(), top + LINE_H + GAP);
         self.draw_fetch_text(0, mid, top, out);
-        out.push(Draw::Rect { x, y, w: BAR_W, h: BAR_H, colour: [1.0, 1.0, 1.0, 0.2] });
+        out.push(Draw::Rect {
+            x,
+            y,
+            w: BAR_W,
+            h: BAR_H,
+            colour: [1.0, 1.0, 1.0, 0.2],
+        });
         let filled = done.min(total) as f32 / total.max(1) as f32;
         if filled > 0.0 {
-            out.push(Draw::Rect { x, y, w: BAR_W * filled, h: BAR_H, colour: [1.0, 1.0, 1.0, 1.0] });
+            out.push(Draw::Rect {
+                x,
+                y,
+                w: BAR_W * filled,
+                h: BAR_H,
+                colour: [1.0, 1.0, 1.0, 1.0],
+            });
         }
         self.draw_fetch_text(1, mid, y + BAR_H + GAP, out);
     }
@@ -7870,9 +8015,23 @@ impl App {
             let (w, h) = (tex.w as f32 * scale, tex.h as f32 * scale);
             let (x, y) = (MARGIN + (COLUMN - w) / 2.0, ((ground - h) / 2.0).floor());
             for under in tex.under.into_iter().flatten() {
-                out.push(Draw::Tex { x, y, w, h, tex: under, alpha: 1.0 });
+                out.push(Draw::Tex {
+                    x,
+                    y,
+                    w,
+                    h,
+                    tex: under,
+                    alpha: 1.0,
+                });
             }
-            out.push(Draw::Tex { x, y, w, h, tex: tex.done, alpha: 1.0 });
+            out.push(Draw::Tex {
+                x,
+                y,
+                w,
+                h,
+                tex: tex.done,
+                alpha: 1.0,
+            });
         }
         let rows = (self.fetch_text.len().saturating_sub(1) / 2) as f32;
         let block = 64.0 + rows * ROW;
@@ -7881,10 +8040,24 @@ impl App {
         for row in 0..rows as usize {
             let y = top + 64.0 + row as f32 * ROW;
             if let Some(&(tex, w, h)) = self.fetch_text.get(1 + row * 2) {
-                out.push(Draw::Tex { x: left, y, w: w as f32, h: h as f32, tex, alpha: 1.0 });
+                out.push(Draw::Tex {
+                    x: left,
+                    y,
+                    w: w as f32,
+                    h: h as f32,
+                    tex,
+                    alpha: 1.0,
+                });
             }
             if let Some(&(tex, w, h)) = self.fetch_text.get(2 + row * 2) {
-                out.push(Draw::Tex { x: right - w as f32, y, w: w as f32, h: h as f32, tex, alpha: 1.0 });
+                out.push(Draw::Tex {
+                    x: right - w as f32,
+                    y,
+                    w: w as f32,
+                    h: h as f32,
+                    tex,
+                    alpha: 1.0,
+                });
             }
         }
     }
@@ -7897,7 +8070,10 @@ impl App {
         };
         self.draw_fetch_text(1, self.canvas().w / 2.0, 72.0, out);
         let [left, right] = crate::fetch_art::choice_xs(self.canvas().w);
-        for (i, (x, kind)) in [(left, ArtKind::Real), (right, ArtKind::Logo)].into_iter().enumerate() {
+        for (i, (x, kind)) in [(left, ArtKind::Real), (right, ArtKind::Logo)]
+            .into_iter()
+            .enumerate()
+        {
             let (tex, w, h) = faces[i];
             let (w, h) = (w as f32 * SCALE, h as f32 * SCALE);
             let on = kind == pick;
@@ -7925,15 +8101,30 @@ impl App {
         let (scale, well) = match scene.cart.platform {
             Platform::Gba | Platform::Gbav => (
                 1.0,
-                [slot_ui::LABEL_X, slot_ui::LABEL_Y, slot_ui::LABEL_W, slot_ui::LABEL_H],
+                [
+                    slot_ui::LABEL_X,
+                    slot_ui::LABEL_Y,
+                    slot_ui::LABEL_W,
+                    slot_ui::LABEL_H,
+                ],
             ),
             Platform::Gb => (
                 0.72,
-                [slot_ui::GB_LABEL_X, slot_ui::GB_LABEL_Y, slot_ui::GB_LABEL_W, slot_ui::GB_LABEL_H],
+                [
+                    slot_ui::GB_LABEL_X,
+                    slot_ui::GB_LABEL_Y,
+                    slot_ui::GB_LABEL_W,
+                    slot_ui::GB_LABEL_H,
+                ],
             ),
             Platform::Gbc => (
                 0.72,
-                [slot_ui::GBC_LABEL_X, slot_ui::GBC_LABEL_Y, slot_ui::GBC_LABEL_W, slot_ui::GBC_LABEL_H],
+                [
+                    slot_ui::GBC_LABEL_X,
+                    slot_ui::GBC_LABEL_Y,
+                    slot_ui::GBC_LABEL_W,
+                    slot_ui::GBC_LABEL_H,
+                ],
             ),
         };
         let (fw, fh) = (tex.w as f32, tex.h as f32);
@@ -7969,7 +8160,11 @@ impl App {
         };
         let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
         let (stage, p) = stage_at(self.now() as f64 - scene.started_ms);
-        let sticker = |t: TexId, flat: f32, curl: f32, pose: slot_ui::sticker_curl::Pose, out: &mut Vec<Draw>| {
+        let sticker = |t: TexId,
+                       flat: f32,
+                       curl: f32,
+                       pose: slot_ui::sticker_curl::Pose,
+                       out: &mut Vec<Draw>| {
             let focus = [self.canvas().w / 2.0, 240.0];
             for strip in slot_ui::sticker_curl::strips(rect, flat, curl, &pose, focus) {
                 let (tex, uv) = match (strip.back, self.fetch_paper) {
@@ -8034,7 +8229,11 @@ impl App {
         }
     }
 
-    pub fn cart_shells(&self, platform: Platform, stem: &str) -> Vec<Option<slot_store::ShellChoice>> {
+    pub fn cart_shells(
+        &self,
+        platform: Platform,
+        stem: &str,
+    ) -> Vec<Option<slot_store::ShellChoice>> {
         self.shelves
             .iter()
             .flat_map(|(_, shelf)| shelf.carts.iter())
@@ -8149,17 +8348,18 @@ impl App {
         }
         let now = self.now() as f64;
         let playable: Vec<(Platform, String)> = match &self.fetch_art {
-            Some(FetchArt::Running(run)) if !run.queue.is_empty() => self
-                .carts()
-                .map(|c| (c.platform, c.stem.clone()))
-                .collect(),
+            Some(FetchArt::Running(run)) if !run.queue.is_empty() => {
+                self.carts().map(|c| (c.platform, c.stem.clone())).collect()
+            }
             _ => Vec::new(),
         };
         let Some(FetchArt::Running(run)) = &mut self.fetch_art else {
             return;
         };
         let unplayable = run.drop_unplayable(&|l: &ArtLanded| {
-            playable.iter().any(|(p, s)| *p == l.platform && *s == l.stem)
+            playable
+                .iter()
+                .any(|(p, s)| *p == l.platform && *s == l.stem)
         });
         self.fetch_landed.extend(unplayable);
         let Some(FetchArt::Running(run)) = &mut self.fetch_art else {
@@ -8183,9 +8383,10 @@ impl App {
             };
             run.closing = picked.cloned().map(|cart| (cart, now));
         }
-        let waiting = run.closing.as_ref().is_some_and(|(cart, since)| {
-            required && !built(cart) && now - since < SUMMARY_WAIT_MS
-        });
+        let waiting = run
+            .closing
+            .as_ref()
+            .is_some_and(|(cart, since)| required && !built(cart) && now - since < SUMMARY_WAIT_MS);
         let over = (run.over() && !waiting).then(|| FetchArt::Summary {
             featured: run.closing.as_ref().map(|(cart, _)| cart.clone()),
             stopped: run.stopping,
@@ -8319,10 +8520,10 @@ impl App {
         self.restock_recents();
         self.restock_favorites();
         for ((_, shelf), (index, seat)) in self.shelves.iter_mut().zip(seats) {
-            let found = shelf
-                .carts
-                .iter()
-                .position(|c| seat.as_ref().is_some_and(|(p, s)| c.platform == *p && c.stem == *s));
+            let found = shelf.carts.iter().position(|c| {
+                seat.as_ref()
+                    .is_some_and(|(p, s)| c.platform == *p && c.stem == *s)
+            });
             if !shelf.carts.is_empty() {
                 shelf.select(found.unwrap_or(index.min(shelf.carts.len() - 1)));
             }
@@ -8359,7 +8560,9 @@ impl App {
     }
 
     pub fn server_scene_running(&self) -> bool {
-        self.server.as_ref().is_some_and(ServerSession::scene_running)
+        self.server
+            .as_ref()
+            .is_some_and(ServerSession::scene_running)
     }
 
     pub fn server_paper(&self) -> Option<&ServerPaper> {
@@ -8435,7 +8638,10 @@ impl App {
     fn open_networks(&mut self) {
         let joined = self.wifi().status.ssid.clone().filter(|_| self.wifi_up());
         self.phase = Phase::Networks {
-            pick: joined.map_or(crate::networks::NetPick::Top, crate::networks::NetPick::Name),
+            pick: joined.map_or(
+                crate::networks::NetPick::Top,
+                crate::networks::NetPick::Name,
+            ),
         };
         if !self.state.wifi_off {
             self.hold_wifi();
@@ -8489,7 +8695,9 @@ impl App {
                 return;
             }
             Action::GbaDown(Btn::B) | Action::QuickMenu => {
-                self.phase = Phase::Networks { pick: NetPick::Scan };
+                self.phase = Phase::Networks {
+                    pick: NetPick::Scan,
+                };
                 return;
             }
             _ => return,
@@ -8732,7 +8940,9 @@ impl App {
         }
         for (_, shelf) in &mut self.shelves {
             for i in 0..shelf.carts.len() {
-                if shelf.carts[i].stem == stem && platform.is_none_or(|p| shelf.carts[i].platform == p) {
+                if shelf.carts[i].stem == stem
+                    && platform.is_none_or(|p| shelf.carts[i].platform == p)
+                {
                     shelf.set_wrapped(i, None);
                 }
             }
@@ -9067,7 +9277,10 @@ impl App {
                 let rows = page_rows(snap, ssid, off);
                 Some(NetScreen {
                     selected: (*row).min(rows.len() - 1),
-                    lines: rows.iter().map(|r| page_line(*r, snap, ssid, off)).collect(),
+                    lines: rows
+                        .iter()
+                        .map(|r| page_line(*r, snap, ssid, off))
+                        .collect(),
                     message: None,
                 })
             }
@@ -9108,7 +9321,8 @@ impl App {
     }
 
     pub fn network_back(&self) -> &'static str {
-        let scanning = matches!(self.phase, Phase::NetworkScan { .. }) && self.wifi().scan.is_none();
+        let scanning =
+            matches!(self.phase, Phase::NetworkScan { .. }) && self.wifi().scan.is_none();
         if scanning {
             "Cancel"
         } else {
@@ -9272,10 +9486,9 @@ impl App {
             | UpdateState::Closing(_) => return None,
             UpdateState::Failed(f) => {
                 let (title, detail) = match f {
-                    UpdateFail::NoWifi => (
-                        "Could not join Wi-Fi",
-                        "Check Wi-Fi in the General menu.",
-                    ),
+                    UpdateFail::NoWifi => {
+                        ("Could not join Wi-Fi", "Check Wi-Fi in the General menu.")
+                    }
                     UpdateFail::Offline => (
                         "Could not connect",
                         "Check the network has internet access.",

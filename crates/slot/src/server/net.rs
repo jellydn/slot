@@ -52,7 +52,10 @@ pub fn wifi_ip() -> Option<Ipv4Addr> {
         }
     }
     unsafe { libc::freeifaddrs(head) };
-    if cfg!(all(target_os = "linux", any(target_arch = "aarch64", target_arch = "arm"))) {
+    if cfg!(all(
+        target_os = "linux",
+        any(target_arch = "aarch64", target_arch = "arm")
+    )) {
         wlan
     } else {
         wlan.or(other)
@@ -152,7 +155,11 @@ fn name_bytes(out: &mut Vec<u8>, name: &str) {
 
 fn build(query: &[u8], ip: Ipv4Addr, name: &str, legacy: bool) -> Option<Vec<u8>> {
     let (kind, qtype, qclass) = classify(query, name)?;
-    let (class, ttl): (u16, u32) = if legacy { (1, LEGACY_TTL) } else { (0x8001, TTL) };
+    let (class, ttl): (u16, u32) = if legacy {
+        (1, LEGACY_TTL)
+    } else {
+        (0x8001, TTL)
+    };
     let mut out = Vec::with_capacity(64);
     if legacy {
         out.extend_from_slice(&query[0..2]);
@@ -190,7 +197,12 @@ pub fn answer(query: &[u8], ip: Ipv4Addr, name: &str) -> Option<Vec<u8>> {
     build(query, ip, name, false)
 }
 
-pub fn respond(query: &[u8], ip: Ipv4Addr, name: &str, src: SocketAddrV4) -> Option<(Vec<u8>, SocketAddrV4)> {
+pub fn respond(
+    query: &[u8],
+    ip: Ipv4Addr,
+    name: &str,
+    src: SocketAddrV4,
+) -> Option<(Vec<u8>, SocketAddrV4)> {
     if src.port() == MDNS_PORT {
         build(query, ip, name, false).map(|r| (r, SocketAddrV4::new(GROUP, MDNS_PORT)))
     } else {
@@ -200,7 +212,10 @@ pub fn respond(query: &[u8], ip: Ipv4Addr, name: &str, src: SocketAddrV4) -> Opt
 
 pub fn model_name(model: &str) -> Option<String> {
     let first = model.split('/').next()?;
-    let name: String = first.split_whitespace().collect::<String>().to_ascii_lowercase();
+    let name: String = first
+        .split_whitespace()
+        .collect::<String>()
+        .to_ascii_lowercase();
     (!name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric())).then_some(name)
 }
 
@@ -249,12 +264,20 @@ fn taken(sock: &UdpSocket, ip: Ipv4Addr, name: &str) -> bool {
 
 fn free_name(sock: &UdpSocket, ip: Ipv4Addr) -> Option<String> {
     let model = crate::baseos::var("BASEOS_MODEL").and_then(|m| model_name(&m));
-    std::iter::once(NAME.to_string()).chain(model).find(|name| !taken(sock, ip, name))
+    std::iter::once(NAME.to_string())
+        .chain(model)
+        .find(|name| !taken(sock, ip, name))
 }
 
 fn setsockopt<T>(fd: i32, level: i32, name: i32, value: &T) -> io::Result<()> {
     let r = unsafe {
-        libc::setsockopt(fd, level, name, value as *const T as *const libc::c_void, std::mem::size_of::<T>() as libc::socklen_t)
+        libc::setsockopt(
+            fd,
+            level,
+            name,
+            value as *const T as *const libc::c_void,
+            std::mem::size_of::<T>() as libc::socklen_t,
+        )
     };
     if r == 0 {
         Ok(())
@@ -282,12 +305,18 @@ fn open(ip: Ipv4Addr) -> io::Result<UdpSocket> {
         sin_zero: [0; 8],
     };
     let r = unsafe {
-        libc::bind(fd, &addr as *const libc::sockaddr_in as *const libc::sockaddr, std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t)
+        libc::bind(
+            fd,
+            &addr as *const libc::sockaddr_in as *const libc::sockaddr,
+            std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+        )
     };
     if r != 0 {
         return Err(io::Error::last_os_error());
     }
-    let iface = libc::in_addr { s_addr: u32::from(ip).to_be() };
+    let iface = libc::in_addr {
+        s_addr: u32::from(ip).to_be(),
+    };
     setsockopt(fd, libc::IPPROTO_IP, libc::IP_MULTICAST_IF, &iface)?;
     sock.join_multicast_v4(&GROUP, &ip)?;
     sock.set_multicast_ttl_v4(255)?;
@@ -307,8 +336,15 @@ impl Responder {
         let name = free_name(&sock, ip)?;
         let stop = Arc::new(AtomicBool::new(false));
         let (flag, served) = (stop.clone(), name.clone());
-        let thread = thread::Builder::new().name("slot-mdns".into()).spawn(move || serve(sock, ip, &served, flag)).ok()?;
-        Some(Responder { name, stop, thread: Some(thread) })
+        let thread = thread::Builder::new()
+            .name("slot-mdns".into())
+            .spawn(move || serve(sock, ip, &served, flag))
+            .ok()?;
+        Some(Responder {
+            name,
+            stop,
+            thread: Some(thread),
+        })
     }
 
     pub fn host(&self) -> String {
@@ -343,7 +379,13 @@ fn serve(sock: UdpSocket, ip: Ipv4Addr, name: &str, stop: Arc<AtomicBool>) {
                 }
             }
             Ok(_) => {}
-            Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted) => {}
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::WouldBlock
+                        | io::ErrorKind::TimedOut
+                        | io::ErrorKind::Interrupted
+                ) => {}
             Err(_) => thread::sleep(POLL),
         }
     }

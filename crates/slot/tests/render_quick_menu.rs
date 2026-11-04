@@ -678,7 +678,10 @@ fn the_tools_page_renders_centred() {
         .map(|row| {
             let top = quick_row_top(row, &hidden) as usize;
             let ink = inked(&px, 170..OUT_W as usize - 40, top);
-            (*ink.first().expect("a row with no label"), *ink.last().unwrap())
+            (
+                *ink.first().expect("a row with no label"),
+                *ink.last().unwrap(),
+            )
         })
         .collect();
     let left = spans.iter().map(|s| s.0).min().unwrap();

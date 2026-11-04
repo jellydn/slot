@@ -850,7 +850,10 @@ fn choosing_a_core_writes_it_and_closes() {
     app.apply(Action::GbaDown(Btn::Right));
     app.apply(Action::GbaDown(Btn::A));
 
-    assert_eq!(slot_store::core_for_platform(d.path(), "Emerald", Platform::Gba, Core::Mgba), Core::Gpsp);
+    assert_eq!(
+        slot_store::core_for_platform(d.path(), "Emerald", Platform::Gba, Core::Mgba),
+        Core::Gpsp
+    );
     assert_eq!(
         slot_store::core_for_platform(d.path(), "Zzz", Platform::Gba, Core::Mgba),
         Core::Mgba,
@@ -959,7 +962,10 @@ fn a_mid_hop_writes_where_the_chip_is_heading() {
     app.apply(Action::GbaDown(Btn::Right));
     app.update(0.05);
     app.apply(Action::GbaDown(Btn::A));
-    assert_eq!(slot_store::core_for_platform(d.path(), "Emerald", Platform::Gba, Core::Mgba), Core::Gpsp);
+    assert_eq!(
+        slot_store::core_for_platform(d.path(), "Emerald", Platform::Gba, Core::Mgba),
+        Core::Gpsp
+    );
 }
 
 #[test]
@@ -1013,7 +1019,10 @@ fn shutting_the_lid_closes_the_picker_without_writing() {
     app.apply(Action::GbaDown(Btn::Right));
     app.apply(Action::LidClose);
     assert_eq!(app.core_picker(), None, "the picker survived the lid");
-    assert_eq!(slot_store::core_for_platform(d.path(), "Emerald", Platform::Gba, Core::Mgba), Core::Mgba);
+    assert_eq!(
+        slot_store::core_for_platform(d.path(), "Emerald", Platform::Gba, Core::Mgba),
+        Core::Mgba
+    );
 }
 
 #[test]
@@ -1353,7 +1362,10 @@ fn the_open_cart_rests_over_the_shelf_with_its_lid_turned() {
     );
     let left = at(swap.0)[0] - at(cancel.0)[0] - seen(cancel.1);
     let right = at(choose.0)[0] - at(swap.0)[0] - seen(swap.1);
-    assert!((left - right).abs() <= 1.0, "Swap is not spread: {left} {right}");
+    assert!(
+        (left - right).abs() <= 1.0,
+        "Swap is not spread: {left} {right}"
+    );
 }
 
 #[test]

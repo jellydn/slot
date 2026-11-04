@@ -5,12 +5,12 @@ use crate::hud::HUD_INK;
 use crate::icon::symbols_font;
 use crate::plate::UndoFace;
 use crate::power_menu::{MENU_H, MENU_INK, MENU_PAD};
-use crate::slot_chrome::MOUTH_H;
 use crate::quick_menu::{
     draw_menu_ground, DIM_INK, LEGEND_Y, POINTER_BLEED, POINTER_GAP, QUICK_EDGE, QUICK_LABEL_X,
     QUICK_PITCH, QUICK_VALUE_GAP, QUICK_VISIBLE, SCROLL_INSET, SCROLL_W, TYPE_DROP,
     VALUE_MIN_SCALE,
 };
+use crate::slot_chrome::MOUTH_H;
 
 pub type NetFace = (TexId, u32, u32);
 
@@ -380,7 +380,12 @@ impl PairScreen<'_> {
             .fold(top, f32::max);
         let shift = (OUT_H as f32 - MOUTH_H - (bottom - top)) / 2.0 - top;
         for (slot, face) in self.lines {
-            push(out, *face, self.canvas.centred(face.1 as f32), slot.y() + shift);
+            push(
+                out,
+                *face,
+                self.canvas.centred(face.1 as f32),
+                slot.y() + shift,
+            );
         }
     }
 }

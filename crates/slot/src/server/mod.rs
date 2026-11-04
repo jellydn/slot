@@ -54,7 +54,11 @@ fn static_page(root: &Path, req: &Request) -> Reply {
     if req.method != "GET" && req.method != "HEAD" {
         return Reply::error(405, "method not allowed");
     }
-    if req.path.iter().any(|s| s == ".." || s.contains(['/', '\\', '\0'])) {
+    if req
+        .path
+        .iter()
+        .any(|s| s == ".." || s.contains(['/', '\\', '\0']))
+    {
         return Reply::error(403, "forbidden");
     }
     if let Some(file) = web_file(root, &req.path) {

@@ -581,7 +581,10 @@ mod romm_pages {
             let band = [0.0, 60.0, size.0 as f32, 300.0];
             assert!(region_ink(&px, size, band) > 500, "{panel:?} drew nothing");
             let right = [size.0 as f32 * 0.55, 60.0, size.0 as f32 * 0.45, 300.0];
-            assert!(region_ink(&px, size, right) > 100, "{panel:?} has no values");
+            assert!(
+                region_ink(&px, size, right) > 100,
+                "{panel:?} has no values"
+            );
         }
     }
 
@@ -628,7 +631,10 @@ mod romm_pages {
             let code = [372.0, 186.0, size.0 as f32 - 372.0, 52.0];
             assert!(region_ink(&px, size, code) > 200, "{panel:?} has no code");
             let legend = [0.0, 430.0, size.0 as f32 * 0.5, 50.0];
-            assert!(region_ink(&px, size, legend) > 100, "{panel:?} has no Cancel");
+            assert!(
+                region_ink(&px, size, legend) > 100,
+                "{panel:?} has no Cancel"
+            );
         }
     }
 
@@ -668,9 +674,15 @@ mod romm_pages {
             let above = (OUT_H as f32 - slot_ui::MOUTH_H) as u32;
             let [x0, y0, x1, y1] = ink_box(&px, size, above).expect("no text drawn");
             let mid_x = (x0 + x1) as f32 / 2.0;
-            assert!((mid_x - size.0 as f32 / 2.0).abs() <= 3.0, "{panel:?}: x {mid_x}");
+            assert!(
+                (mid_x - size.0 as f32 / 2.0).abs() <= 3.0,
+                "{panel:?}: x {mid_x}"
+            );
             let mid_y = (y0 + y1) as f32 / 2.0;
-            assert!((mid_y - above as f32 / 2.0).abs() <= 8.0, "{panel:?}: y {mid_y}");
+            assert!(
+                (mid_y - above as f32 / 2.0).abs() <= 8.0,
+                "{panel:?}: y {mid_y}"
+            );
         }
     }
 

@@ -1492,12 +1492,18 @@ fn a_device_without_wifi_is_refused_the_link_screen_and_told_why() {
     let wlan0 = d.path().join("net/wlan0");
     app.set_wifi_probe(wlan0.clone());
     app.apply(Action::GameMenu);
-    assert!(!app.game_menu_open(), "a device with no radio offered a link");
+    assert!(
+        !app.game_menu_open(),
+        "a device with no radio offered a link"
+    );
     assert_eq!(app.toast(), Some(Toast::NoWifi));
     assert!(matches!(app.phase(), Phase::Playing { .. }));
     std::fs::create_dir_all(&wlan0).unwrap();
     app.apply(Action::GameMenu);
-    assert!(app.game_menu_open(), "wlan0 arrived and the link stayed refused");
+    assert!(
+        app.game_menu_open(),
+        "wlan0 arrived and the link stayed refused"
+    );
 }
 
 #[test]
