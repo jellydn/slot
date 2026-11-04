@@ -634,14 +634,10 @@ mod tests {
     }
 
     #[test]
-    fn a_game_boy_label_is_the_shape_of_its_own_well() {
+    fn a_game_boy_label_uses_its_platform_export_size() {
         assert_eq!(size(Platform::Gba), (W, H));
         assert_eq!(size(Platform::Gb), (GB_W, GB_H));
         assert_eq!(size(Platform::Gbc), (GB_W, GB_H));
-
-        let want = crate::cart::GB_LABEL_W as f32 / crate::cart::GB_LABEL_H as f32;
-        let got = GB_W as f32 / GB_H as f32;
-        assert!((got - want).abs() < 0.01, "{got} is not the well's {want}");
 
         let mut logo = Vec::new();
         {
@@ -654,7 +650,11 @@ mod tests {
                 .unwrap();
         }
         let deep = hue::hsl_to_rgb(200.0, 0.65, 0.24);
-        for (platform, want) in [(Platform::Gba, (W, H)), (Platform::Gbc, (GB_W, GB_H))] {
+        for (platform, want) in [
+            (Platform::Gba, (W, H)),
+            (Platform::Gb, (GB_W, GB_H)),
+            (Platform::Gbc, (GB_W, GB_H)),
+        ] {
             let label = Label::from_png(&logo, deep, platform, None).expect("logo decodes");
             let reader = png::Decoder::new(std::io::Cursor::new(label.png()))
                 .read_info()
