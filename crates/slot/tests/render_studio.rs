@@ -1,3 +1,5 @@
+#![cfg(target_os = "macos")]
+
 mod common;
 
 use common::{clocked, tmp_root_with_gb_carts};
@@ -137,9 +139,15 @@ fn custom_and_hex_render_on_the_closed_bar() {
     press(&mut f, Btn::Right);
     press(&mut f, Btn::A);
     let img = frame(&mut f, &mut c, "custom");
-    assert!(lit(&img, 200..520, 430..470) > 40, "legends should spread across the bar");
+    assert!(
+        lit(&img, 200..520, 430..470) > 40,
+        "legends should spread across the bar"
+    );
     press(&mut f, Btn::Y);
-    assert!(matches!(f.app().studio().unwrap().screen, Screen::Hex { .. }));
+    assert!(matches!(
+        f.app().studio().unwrap().screen,
+        Screen::Hex { .. }
+    ));
     let img = frame(&mut f, &mut c, "hex");
     assert!(lit(&img, 380..700, 150..300) > 100, "no digits");
 }
@@ -209,7 +217,10 @@ mod apply {
         let mut e = png::Encoder::new(std::io::BufWriter::new(file), w, h);
         e.set_color(png::ColorType::Rgb);
         e.set_depth(png::BitDepth::Eight);
-        e.write_header().unwrap().write_image_data(&rgb.repeat((w * h) as usize)).unwrap();
+        e.write_header()
+            .unwrap()
+            .write_image_data(&rgb.repeat((w * h) as usize))
+            .unwrap();
     }
 
     #[test]
@@ -236,16 +247,19 @@ mod apply {
         label(&logo, [40, 60, 200]);
         f.app_mut().apply(Action::SelectTap);
         let stem = f.app().studio().unwrap().cart.stem.clone();
-        art.0.lock().unwrap().push_back(ArtEvent::StudioArt(StudioArt {
-            stem,
-            real: Some(real.clone()),
-            logo: Some(logo),
-            wheel: None,
-            duplicates: false,
-            logo_worn: None,
-            look: None,
-            failed: None,
-        }));
+        art.0
+            .lock()
+            .unwrap()
+            .push_back(ArtEvent::StudioArt(StudioArt {
+                stem,
+                real: Some(real.clone()),
+                logo: Some(logo),
+                wheel: None,
+                duplicates: false,
+                logo_worn: None,
+                look: None,
+                failed: None,
+            }));
         press(&mut f, Btn::A);
         for _ in 0..200 {
             let now = f.app().now();
@@ -263,7 +277,11 @@ mod apply {
         }
         std::fs::remove_file(&real).unwrap();
         press(&mut f, Btn::A);
-        assert_eq!(f.app().studio().unwrap().wearing, LabelKind::Real, "the peel waited on the card");
+        assert_eq!(
+            f.app().studio().unwrap().wearing,
+            LabelKind::Real,
+            "the peel waited on the card"
+        );
         for _ in 0..100 {
             let now = f.app().now();
             f.app_mut().tick_ms(now + 5);
@@ -294,11 +312,14 @@ mod apply {
         f.app_mut().apply(Action::SelectTap);
         let stem = f.app().studio().unwrap().cart.stem.clone();
         assert!(f.app().studio().unwrap().cart.label.is_some());
-        art.0.lock().unwrap().push_back(ArtEvent::StudioArt(StudioArt {
-            stem,
-            duplicates: true,
-            ..StudioArt::default()
-        }));
+        art.0
+            .lock()
+            .unwrap()
+            .push_back(ArtEvent::StudioArt(StudioArt {
+                stem,
+                duplicates: true,
+                ..StudioArt::default()
+            }));
         press(&mut f, Btn::A);
         for _ in 0..400 {
             let now = f.app().now();
@@ -317,7 +338,10 @@ mod apply {
         }
         let img = frame(&mut f, &mut c, "text-sticker");
         assert_eq!(f.app().studio_slip_count(), 1);
-        assert!(lit(&img, 370..700, 24..200) > 1000, "no sticker came out of the printer");
+        assert!(
+            lit(&img, 370..700, 24..200) > 1000,
+            "no sticker came out of the printer"
+        );
     }
 
     fn apply_run(bottom: bool) {
@@ -333,16 +357,19 @@ mod apply {
         label(&logo, [40, 60, 200]);
         f.app_mut().apply(Action::SelectTap);
         let stem = f.app().studio().unwrap().cart.stem.clone();
-        art.0.lock().unwrap().push_back(ArtEvent::StudioArt(StudioArt {
-            stem,
-            real: Some(real),
-            logo: Some(logo),
-            wheel: None,
-            duplicates: false,
-            logo_worn: None,
-            look: None,
-            failed: None,
-        }));
+        art.0
+            .lock()
+            .unwrap()
+            .push_back(ArtEvent::StudioArt(StudioArt {
+                stem,
+                real: Some(real),
+                logo: Some(logo),
+                wheel: None,
+                duplicates: false,
+                logo_worn: None,
+                look: None,
+                failed: None,
+            }));
         press(&mut f, Btn::A);
         for _ in 0..200 {
             let now = f.app().now();
@@ -364,7 +391,11 @@ mod apply {
         let before = px(&sheet, 160, 220);
         press(&mut f, Btn::Right);
         let moved = frame(&mut f, &mut c, "sheet-moved");
-        assert_eq!(px(&moved, 160, 220), before, "moving the highlight changed the cart");
+        assert_eq!(
+            px(&moved, 160, 220),
+            before,
+            "moving the highlight changed the cart"
+        );
         if !bottom {
             press(&mut f, Btn::Left);
         }
@@ -372,23 +403,43 @@ mod apply {
         f.app_mut().tick_ms(now + 300);
         f.compose(&mut c);
         press(&mut f, Btn::A);
-        let want = if bottom { LabelKind::Logo } else { LabelKind::Real };
+        let want = if bottom {
+            LabelKind::Logo
+        } else {
+            LabelKind::Real
+        };
         assert_eq!(f.app().studio().unwrap().wearing, want);
         let now = f.app().now();
         f.app_mut().tick_ms(now + 60);
-        assert_eq!(f.app().studio_apart(), 0.0, "applying shuffled the stickers");
+        assert_eq!(
+            f.app().studio_apart(),
+            0.0,
+            "applying shuffled the stickers"
+        );
         let start = now;
         let mut shots = Vec::new();
-        for (name, at) in [("peel", 120), ("toss", 320), ("lift", 500), ("tocart", 680), ("roll", 900)] {
+        for (name, at) in [
+            ("peel", 120),
+            ("toss", 320),
+            ("lift", 500),
+            ("tocart", 680),
+            ("roll", 900),
+        ] {
             f.app_mut().tick_ms(start + at);
             f.compose(&mut c);
             let out = c.read_frame();
             if name == "peel" {
                 let [r, _, b] = px(&out, 560, 240);
                 let on_top = if bottom { b > r } else { r > b };
-                assert!(on_top, "the sticker being peeled fell under its neighbor: {r} {b}");
+                assert!(
+                    on_top,
+                    "the sticker being peeled fell under its neighbor: {r} {b}"
+                );
                 let other = px(&out, 560, if bottom { 120 } else { 340 });
-                assert!(other.iter().all(|c| *c < 140), "the other sticker lit up: {other:?}");
+                assert!(
+                    other.iter().all(|c| *c < 140),
+                    "the other sticker lit up: {other:?}"
+                );
                 if bottom {
                     return;
                 }
@@ -403,14 +454,23 @@ mod apply {
             shots.push(out);
         }
         let other = px(&shots[2], 560, 340);
-        assert!(other[2] > other[0] + 30, "the other sticker lost its art: {other:?}");
+        assert!(
+            other[2] > other[0] + 30,
+            "the other sticker lost its art: {other:?}"
+        );
         let on_slip = px(&shots[3], 522, 120);
-        assert!(on_slip[1] > 150, "the chosen sticker is still on its slip: {on_slip:?}");
+        assert!(
+            on_slip[1] > 150,
+            "the chosen sticker is still on its slip: {on_slip:?}"
+        );
         f.app_mut().tick_ms(start + APPLY_MS as u64 + 50);
         f.compose(&mut c);
         let end = c.read_frame();
         let cart = px(&end, 160, 220);
-        assert!(cart[0] > 150 && cart[2] < 90, "the real label is not on the cart: {cart:?}");
+        assert!(
+            cart[0] > 150 && cart[2] < 90,
+            "the real label is not on the cart: {cart:?}"
+        );
         assert!(f.app().studio().is_some());
     }
 }

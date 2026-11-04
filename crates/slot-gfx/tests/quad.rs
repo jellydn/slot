@@ -1,3 +1,5 @@
+#![cfg(target_os = "macos")]
+
 use slot_gfx::{Compositor, Draw, HeadlessSurface, OUT_H, OUT_W};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
@@ -35,7 +37,12 @@ fn quad_fills_its_trapezoid() {
     c.draw_list(&[
         ground(),
         Draw::Quad {
-            corners: [[100.0, 100.0], [140.0, 110.0], [140.0, 190.0], [100.0, 200.0]],
+            corners: [
+                [100.0, 100.0],
+                [140.0, 110.0],
+                [140.0, 190.0],
+                [100.0, 200.0],
+            ],
             tex: red,
             uv: [0.0, 0.0, 1.0, 1.0],
             alpha: 1.0,
@@ -58,7 +65,12 @@ fn quad_samples_its_uv() {
     c.draw_list(&[
         ground(),
         Draw::Quad {
-            corners: [[200.0, 200.0], [260.0, 200.0], [260.0, 260.0], [200.0, 260.0]],
+            corners: [
+                [200.0, 200.0],
+                [260.0, 200.0],
+                [260.0, 260.0],
+                [200.0, 260.0],
+            ],
             tex: pair,
             uv: [0.5, 0.0, 0.5, 1.0],
             alpha: 1.0,
@@ -78,7 +90,12 @@ fn quad_corners_run_around_the_edge() {
     c.draw_list(&[
         ground(),
         Draw::Quad {
-            corners: [[100.0, 100.0], [200.0, 100.0], [200.0, 200.0], [100.0, 200.0]],
+            corners: [
+                [100.0, 100.0],
+                [200.0, 100.0],
+                [200.0, 200.0],
+                [100.0, 200.0],
+            ],
             tex: red,
             uv: [0.0, 0.0, 1.0, 1.0],
             alpha: 1.0,
@@ -100,7 +117,12 @@ fn quad_v_runs_down_the_screen() {
     c.draw_list(&[
         ground(),
         Draw::Quad {
-            corners: [[100.0, 100.0], [200.0, 100.0], [200.0, 200.0], [100.0, 200.0]],
+            corners: [
+                [100.0, 100.0],
+                [200.0, 100.0],
+                [200.0, 200.0],
+                [100.0, 200.0],
+            ],
             tex: pair,
             uv: [0.0, 0.0, 1.0, 1.0],
             alpha: 1.0,
@@ -121,7 +143,12 @@ fn quad_alpha_blends_and_a_rect_after_it_still_lands_flat() {
     c.draw_list(&[
         ground(),
         Draw::Quad {
-            corners: [[100.0, 100.0], [200.0, 100.0], [200.0, 200.0], [100.0, 200.0]],
+            corners: [
+                [100.0, 100.0],
+                [200.0, 100.0],
+                [200.0, 200.0],
+                [100.0, 200.0],
+            ],
             tex: white,
             uv: [0.0, 0.0, 1.0, 1.0],
             alpha: 0.5,

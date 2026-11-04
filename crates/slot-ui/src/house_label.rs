@@ -243,7 +243,8 @@ pub fn compose(
 
 fn chunks(png: &[u8]) -> Option<Vec<(&[u8], std::ops::Range<usize>)>> {
     const SIGNATURE: usize = 8;
-    if png.len() < SIGNATURE || png[..SIGNATURE] != [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a] {
+    if png.len() < SIGNATURE || png[..SIGNATURE] != [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]
+    {
         return None;
     }
     let mut out = Vec::new();
@@ -313,9 +314,15 @@ pub fn glance(png: &[u8]) -> Option<Vec<u8>> {
     let (w, h) = (w as usize, h as usize);
     let mut out = Vec::with_capacity(GLANCE_W * GLANCE_H * 3);
     for row in 0..GLANCE_H {
-        let (top, bottom) = (row * h / GLANCE_H, ((row + 1) * h / GLANCE_H).max(row * h / GLANCE_H + 1));
+        let (top, bottom) = (
+            row * h / GLANCE_H,
+            ((row + 1) * h / GLANCE_H).max(row * h / GLANCE_H + 1),
+        );
         for col in 0..GLANCE_W {
-            let (left, right) = (col * w / GLANCE_W, ((col + 1) * w / GLANCE_W).max(col * w / GLANCE_W + 1));
+            let (left, right) = (
+                col * w / GLANCE_W,
+                ((col + 1) * w / GLANCE_W).max(col * w / GLANCE_W + 1),
+            );
             let mut sum = [0u32; 3];
             for y in top..bottom {
                 for p in rgba[(y * w + left) * 4..(y * w + right) * 4].chunks_exact(4) {
@@ -332,7 +339,9 @@ pub fn glance(png: &[u8]) -> Option<Vec<u8>> {
 }
 
 pub fn looks_same(a: &[u8], b: &[u8]) -> bool {
-    a.iter().zip(b).all(|(x, y)| x.abs_diff(*y) <= GLANCE_TOLERANCE)
+    a.iter()
+        .zip(b)
+        .all(|(x, y)| x.abs_diff(*y) <= GLANCE_TOLERANCE)
 }
 
 pub fn untagged(png: &[u8]) -> Vec<u8> {
@@ -636,8 +645,8 @@ mod tests {
     #[test]
     fn a_game_boy_label_uses_its_platform_export_size() {
         assert_eq!(size(Platform::Gba), (W, H));
-        assert_eq!(size(Platform::Gb), (GB_W, GB_H));
-        assert_eq!(size(Platform::Gbc), (GB_W, GB_H));
+        assert_eq!(size(Platform::Gb), (1024, 901));
+        assert_eq!(size(Platform::Gbc), (1024, 901));
 
         let mut logo = Vec::new();
         {
@@ -651,9 +660,9 @@ mod tests {
         }
         let deep = hue::hsl_to_rgb(200.0, 0.65, 0.24);
         for (platform, want) in [
-            (Platform::Gba, (W, H)),
-            (Platform::Gb, (GB_W, GB_H)),
-            (Platform::Gbc, (GB_W, GB_H)),
+            (Platform::Gba, (1280, 661)),
+            (Platform::Gb, (1024, 901)),
+            (Platform::Gbc, (1024, 901)),
         ] {
             let label = Label::from_png(&logo, deep, platform, None).expect("logo decodes");
             let reader = png::Decoder::new(std::io::Cursor::new(label.png()))
