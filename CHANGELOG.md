@@ -1,5 +1,47 @@
 # Changelog
 
+Notable jellydn/slot-tsp fork changes are listed first. The upstream Slot
+release history is retained below. Fork entries follow the monthly sync and
+fixes convention used by [jellydn/VoiceInk](https://github.com/jellydn/VoiceInk).
+
+## [2026-11] - Sync & Fixes
+
+### Stock TSP 0.2.0 — RomM & Wi-Fi wake correction
+
+Released [stock-tsp-0.2.0](https://github.com/jellydn/slot-tsp/releases/tag/stock-tsp-0.2.0)
+from fork runtime commit `0f48680`, with release docs and packaging at `8f26007`.
+Highlights:
+- Built-in paired RomM Library for GB/GBC/GBA, with paging and downloads through
+  the existing installer. No credentials or games are bundled.
+- A later healthy stock association and IPv4 address can clear a stale
+  Network In Use error after stock takes over Wi-Fi. Competitor guards remain;
+  Slot does not adopt, kill or restart stock DHCP clients.
+- Device A-select Restart/Shutdown, B Back, save/flush/settle, Disconnect and
+  stock Lid Power Off Unavailable remain in place.
+- Copy-to-FAT32 install package, corresponding source, checksums and provenance.
+
+Host-verified combined executable; handheld acceptance is pending. The 616
+pinned Linux executions and 229 clean host integration tests passed. Four
+full-workspace failures also reproduce on unchanged fork upstream; no full-suite
+or Internet/repeated-wake reliability pass is claimed. See the
+[release notes](knulli/RELEASE-STOCK-0.2.0.md) for the exact frozen executable,
+test exceptions, installation/recovery and LED/Fn/sleep/early-logo limits.
+
+### Upstream Sync — pending conflict approval
+
+Fetched BrandonKowalski/slot@f1f6ef9 (`main`), 14 commits after the common
+`e66715d` baseline. Changes include slot.local mDNS probing/rename handling,
+BaseOS network-time integration, Gamebit label/guide updates, Gambatte rumble,
+a no-network notice adjustment and Boot Logo Studio documentation.
+
+A read-only merge preview found conflicts in `slot-power/src/lib.rs`,
+`slot/src/server/net.rs` and `slot/src/server/session.rs` under `crates`.
+No merge has been applied. Power-hook and mDNS conflict resolutions await owner
+approval. These upstream changes are not part of the frozen 0.2.0 binary or
+its verification. Stock-TSP, Wi-Fi and RomM work remains unchanged.
+
+## Upstream Slot release history
+
 ## [1.14.0](https://github.com/BrandonKowalski/slot/releases/tag/v1.14.0)
 
 - Gambatte is a new core for Game Boy and Game Boy Color, and the default on new cards. Existing cards stay on mGBA. Press START on a Game Boy cart to switch cores. Saves and the clock carry over between them. ([#184](https://github.com/BrandonKowalski/slot/issues/184))
