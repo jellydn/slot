@@ -27,18 +27,31 @@ or Internet/repeated-wake reliability pass is claimed. See the
 [release notes](knulli/RELEASE-STOCK-0.2.0.md) for the exact frozen executable,
 test exceptions, installation/recovery and LED/Fn/sleep/early-logo limits.
 
-### Upstream Sync — pending conflict approval
+### Upstream Sync (e66715d → f1f6ef9)
 
-Fetched BrandonKowalski/slot@f1f6ef9 (`main`), 14 commits after the common
-`e66715d` baseline. Changes include slot.local mDNS probing/rename handling,
-BaseOS network-time integration, Gamebit label/guide updates, Gambatte rumble,
-a no-network notice adjustment and Boot Logo Studio documentation.
+Merged BrandonKowalski/slot@f1f6ef9 (`main`), 14 commits. Highlights:
+- slot.local mDNS probing, collision handling and receipt updates on rename.
+- BaseOS-managed network time in place of Slot's SNTP worker. Stock TG5040
+  retains its inert platform default; this does not add a Tina NTP service.
+- Gamebit label refresh after upload/fetch and persistent label/guide file
+  inputs for Safari. A can skip the receipt animation; B still closes it.
+- Gambatte rumble enabled and a shorter no-network notice.
+- Browser-only Boot Logo Studio and upstream boot-logo documentation.
+  This is not an internal-logo writer for stock TG5040.
 
-A read-only merge preview found conflicts in `slot-power/src/lib.rs`,
-`slot/src/server/net.rs` and `slot/src/server/session.rs` under `crates`.
-No merge has been applied. Power-hook and mDNS conflict resolutions await owner
-approval. These upstream changes are not part of the frozen 0.2.0 binary or
-its verification. Stock-TSP, Wi-Fi and RomM work remains unchanged.
+Owner-approved merge resolutions:
+- `crates/slot-power/src/lib.rs`: retain fork `request_restart` and
+  `request_poweroff`; adopt upstream `set_network_time` and remove the obsolete
+  background clock helper. Adapt the stock inert-controls regression to the new
+  API, without adding stock service commands.
+- `crates/slot/src/server/net.rs`: adopt upstream mDNS claim/rename handling.
+- `crates/slot/src/server/session.rs`: retain upstream `follow_rename`.
+
+Stock power, DHCP ownership/wake correction, A/B controls and RomM integration
+are preserved. This is a source sync only. Published stable 0.2.0 tag/assets
+remain frozen at their earlier source and executable; the sync is not part of
+that binary or its hardware evidence. No SD installation or new device-action
+workflow is included.
 
 ## Upstream Slot release history
 

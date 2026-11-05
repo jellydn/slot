@@ -75,9 +75,7 @@ pub trait Platform: Send {
         self.poweroff()
     }
 
-    fn set_clock_in_background(&mut self, secs: i64) {
-        self.set_clock(secs);
-    }
+    fn set_network_time(&mut self, _on: bool) {}
 
     fn set_rumble(&mut self, strength: u16);
 

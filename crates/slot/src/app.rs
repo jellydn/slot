@@ -152,7 +152,6 @@ const ALERT_HOLD: f32 = 0.45;
 const ALERT_GONE: f32 = 0.9;
 
 const CLOCK_FLOOR: i64 = 1_577_836_800;
-const CLOCK_DRIFT_SECS: i64 = 2;
 
 pub enum PendingUndo {
     Save {
@@ -599,7 +598,6 @@ pub struct App {
     game_bezel: Option<TexId>,
     bezel_column: Vec<u8>,
     in_game_menu: Option<QuickRow>,
-    /// 0 while the pause footer is off the bottom, 1 when it sits in the carousel's place.
     footer: f32,
     footer_row: Option<QuickRow>,
     states_from_menu: bool,
@@ -680,7 +678,6 @@ pub struct App {
     studio_hex: Option<(String, crate::studio_view::Style)>,
     wifi_wanted_at: Option<Millis>,
     wifi: Option<(crate::wifi::Wifi, std::time::Instant, Millis)>,
-    net_time: crate::net_time::NetTime,
     joined_hidden: Option<(String, bool)>,
     wifi_bars: u8,
     wifi_faces: Option<[[slot_ui::NetFace; 4]; 2]>,
@@ -873,7 +870,6 @@ impl App {
             studio_hex: None,
             wifi_wanted_at: None,
             wifi: None,
-            net_time: crate::net_time::NetTime::new(std::sync::Arc::new(crate::sntp::fetch)),
             joined_hidden: None,
             wifi_bars: 3,
             wifi_faces: None,
@@ -1423,12 +1419,16 @@ impl App {
         };
         let (zone, clock_24h, from_menu) = (picker.zone(), picker.clock_24h(), *from_menu);
         let utc = self.utc_secs() + moved;
+        let network_time = network_time.unwrap_or(self.state.network_time);
         if let Some(power) = &mut self.power {
             power.set_clock(utc);
+            if network_time != self.state.network_time {
+                power.set_network_time(network_time);
+            }
         }
         self.state.zone = zone;
         self.state.clock_24h = clock_24h;
-        self.state.network_time = network_time.unwrap_or(self.state.network_time);
+        self.state.network_time = network_time;
         self.state.clock_set = true;
         self.persist();
         if from_menu {
@@ -3086,6 +3086,7 @@ impl App {
             self.phase = clock_screen(secs, &self.state, self.has_saved(), false);
         }
         self.copy_card_log(&power);
+        power.set_network_time(self.state.network_time);
         if let Some(result) = power.take_repair_result() {
             let toast = match result {
                 RepairResult::Repaired | RepairResult::Clean => Toast::CardRepaired,
@@ -4732,7 +4733,6 @@ impl App {
     fn step_footer(&mut self, dt: f32) {
         let shown = match &self.phase {
             Phase::Playing { .. } => self.in_game_menu_shown(),
-            // The carousel already holds this strip, so the menu does not slide it.
             Phase::QuickMenu { row } => {
                 self.footer = 1.0;
                 self.footer_row = Some(*row);
@@ -4771,8 +4771,6 @@ impl App {
         (1.0 - ease(self.footer)) * MOUTH_H
     }
 
-    /// The carousel strip shares this canvas, so the picture scales in the space above it.
-    /// A 4:3 game frame is a different canvas; its close keeps the full-frame scale.
     fn footer_on_carousel_canvas(&self) -> bool {
         !self.framed_panel() || !self.shows_game()
     }
@@ -4918,26 +4916,8 @@ impl App {
         self.timers();
     }
 
-    pub fn set_net_time_source(&mut self, source: crate::net_time::Source) {
-        self.net_time = crate::net_time::NetTime::new(source);
-    }
-
-    fn step_net_time(&mut self) {
-        let ready = self.state.network_time && self.wifi_up();
-        let now = self.now();
-        let Some(utc) = self.net_time.step(ready, now) else {
-            return;
-        };
-        if let Some(power) = &mut self.power {
-            if (utc - power.now()).abs() >= CLOCK_DRIFT_SECS {
-                power.set_clock_in_background(utc);
-            }
-        }
-    }
-
     fn timers(&mut self) {
         self.step_server();
-        self.step_net_time();
         self.take_art_events();
         self.take_romm_events();
         self.romm_tick(self.now());
@@ -5638,8 +5618,6 @@ impl App {
                 }
                 row
             }
-            // The carousel menu is not a game, so the mouth stays empty, in the
-            // same place the shelf already had it.
             Phase::QuickMenu { row } if row.binds() => {
                 slot_ui::draw_plugged_slot(self.canvas(), self.plugged_face, 1.0, out);
                 Some(*row)
@@ -5669,8 +5647,6 @@ impl App {
             return;
         }
         let start = out.len();
-        // The framed power-off paints black and the picture, and never the slot. The other
-        // close already draws the seated cart through the chrome.
         if self.framed_panel() && self.screen > 0.0 {
             self.draw_seated_mouth(cart, out);
         }
@@ -8604,8 +8580,10 @@ impl App {
 
     fn server_input(&mut self, action: Action) {
         let now = self.now();
-        if let (Action::GbaDown(Btn::B), Some(server)) = (action, &mut self.server) {
-            server.stop(now);
+        match (action, &mut self.server) {
+            (Action::GbaDown(Btn::B), Some(server)) => server.stop(now),
+            (Action::GbaDown(Btn::A), Some(server)) => server.skip(now),
+            _ => {}
         }
     }
 
@@ -9849,8 +9827,8 @@ impl App {
             UpdateState::Notice(NetNotice::Password) => ("Invalid Password".into(), String::new()),
             UpdateState::Notice(NetNotice::RommPort) => ("Invalid Port".into(), String::new()),
             UpdateState::Notice(NetNotice::NoNetwork) => (
-                "You must be connected to a network to use tools".into(),
-                String::new(),
+                "Not connected".into(),
+                "Join a Wi-Fi network to use Tools.".into(),
             ),
             UpdateState::Notice(NetNotice::RommNoServer) => (
                 "Enter a server first".into(),

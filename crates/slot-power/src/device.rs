@@ -30,6 +30,8 @@ const REPAIR_STAGE: &str = "/tmp/slot-repair";
 
 const REPAIR_RESULT: &str = "/data/slot-repair.result";
 
+const TIMEDATECTL: &str = "/usr/bin/timedatectl";
+
 const WIFI_MODULE: &str = "8821cs";
 
 const WIFI_UNLOAD_WAIT: Duration = Duration::from_secs(5);
@@ -628,8 +630,8 @@ impl Platform for DevicePlatform {
         write_clock(secs);
     }
 
-    fn set_clock_in_background(&mut self, secs: i64) {
-        std::thread::spawn(move || write_clock(secs));
+    fn set_network_time(&mut self, on: bool) {
+        std::thread::spawn(move || set_ntp(on));
     }
 
     fn relink_adb(&mut self) -> bool {
@@ -756,6 +758,22 @@ pub fn take_repair_result(file: &Path) -> Option<RepairResult> {
         "clean" => RepairResult::Clean,
         _ => RepairResult::Failed,
     })
+}
+
+fn set_ntp(on: bool) {
+    let want = if on { "yes" } else { "no" };
+    let now = Command::new(TIMEDATECTL)
+        .args(["show", "-p", "NTP", "--value"])
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    if now.as_deref() == Some(want) {
+        return;
+    }
+    ran(
+        "timedatectl set-ntp",
+        Command::new(TIMEDATECTL).args(["set-ntp", want]).status(),
+    );
 }
 
 fn write_clock(secs: i64) {

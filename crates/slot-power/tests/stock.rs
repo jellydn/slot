@@ -28,7 +28,8 @@ fn stock_reads_the_verified_battery_but_leaves_system_controls_untouched() {
     platform.set_led(LedState::Off);
     platform.set_rumble(u16::MAX);
     platform.set_clock(1);
-    platform.set_clock_in_background(2);
+    platform.set_network_time(true);
+    platform.set_network_time(false);
     assert!(!platform.relink_adb());
     assert!(platform.card_log().is_none());
     assert!(platform.take_repair_result().is_none());
