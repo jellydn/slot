@@ -214,6 +214,15 @@ impl<C: Control> Backend for Station<C> {
                 self.error = Some(Failure::Other);
             }
         }
+        // After a handoff, report a fresh stock address without owning its
+        // client or clearing unrelated connection/persistence failures.
+        if !self.managed
+            && self.error == Some(Failure::DhcpBusy)
+            && self.last.state == State::Completed
+            && self.last.ip.is_some()
+        {
+            self.error = None;
+        }
         if self.managed {
             self.last.ip = None;
             if let Some((id, ssid)) = &self.dhcp_profile {
@@ -226,6 +235,11 @@ impl<C: Control> Backend for Station<C> {
                         Err(error) => {
                             self.error = Some(error);
                             self.stop_dhcp();
+                            if error == Failure::DhcpBusy {
+                                // A stock wake writer may now own wlan0. Do
+                                // not mask its subsequent STATUS indefinitely.
+                                self.managed = false;
+                            }
                         }
                     }
                 } else if self.pending.is_none() {

@@ -436,6 +436,74 @@ impl slot::wifi::stock_dhcp::Client for LeaseClient {
 }
 
 #[test]
+fn stock_wake_handoff_observes_the_stock_address_without_reconnecting_or_adopting_dhcp() {
+    use slot::networks::{page_rows, status_text, PageRow};
+    use slot::wifi::Failure;
+    for acquired in [false, true] {
+        for failure in [Failure::DhcpBusy, Failure::NoIp] {
+            let state = Arc::new(Mutex::new(StationState {
+                lease: false,
+                ..Default::default()
+            }));
+            let lease = Arc::new(Mutex::new(Ok(None)));
+            let backend = slot::wifi::stock_station::Station::with_dhcp(
+                StationMock {
+                    state: state.clone(),
+                    replies: VecDeque::new(),
+                },
+                Box::new(LeaseClient(lease.clone())),
+            );
+            let mut wifi = Wifi::inline(Box::new(backend));
+            let now = Instant::now();
+            wifi.send(Cmd::Hold);
+            wifi.send(Cmd::Connect(2));
+            wifi.poll(now);
+            if acquired {
+                *lease.lock().unwrap() = Ok(Some("192.0.2.37".into()));
+            }
+            wifi.poll(now + Duration::from_secs(1));
+            *lease.lock().unwrap() = Err(failure);
+            wifi.poll(now + Duration::from_secs(4));
+            assert_eq!(wifi.snapshot().failure.as_ref().unwrap().1, failure);
+            assert!(wifi.snapshot().status.ip.is_none());
+            wifi.poll(now + Duration::from_secs(7));
+            assert!(wifi.snapshot().status.ip.is_none());
+            assert_eq!(status_text(wifi.snapshot(), "Old", false), failure.label());
+
+            // Stock wake policy now reports its own address. This is not an
+            // owned lease event and must not cause any connection mutation.
+            state.lock().unwrap().lease = true;
+            state.lock().unwrap().commands.clear();
+            wifi.poll(now + Duration::from_secs(10));
+            if failure == Failure::DhcpBusy {
+                assert_eq!(status_text(wifi.snapshot(), "Old", false), "Connected");
+                assert_eq!(wifi.snapshot().status.ip.as_deref(), Some("192.168.5.87"));
+                assert!(wifi.snapshot().failure.is_none());
+                assert_eq!(
+                    page_rows(wifi.snapshot(), "Old", false),
+                    [PageRow::Status, PageRow::Ip, PageRow::Disconnect]
+                );
+                wifi.poll(now + Duration::from_secs(13));
+                assert!(wifi.snapshot().status.ip.is_some());
+                state.lock().unwrap().disconnected = true;
+                wifi.poll(now + Duration::from_secs(16));
+                assert!(wifi.snapshot().status.ip.is_none());
+            } else {
+                assert_eq!(status_text(wifi.snapshot(), "Old", false), failure.label());
+                assert!(wifi.snapshot().status.ip.is_none());
+            }
+            assert!(state
+                .lock()
+                .unwrap()
+                .commands
+                .iter()
+                .all(|command| { command == "STATUS" || command == "LIST_NETWORKS" }));
+            assert!(state.lock().unwrap().saved.is_empty());
+        }
+    }
+}
+
+#[test]
 fn stock_join_without_a_stock_dhcp_client_waits_for_owned_lease_before_saving() {
     use slot::wifi::{Failure, Phase};
     let state = Arc::new(Mutex::new(StationState {

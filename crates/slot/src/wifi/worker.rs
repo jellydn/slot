@@ -351,6 +351,13 @@ impl Core {
                     self.backend.connection_error(),
                 ) {
                     self.snap.failure = Some((ssid, error));
+                } else if self.snap.status.state == State::Completed
+                    && self.snap.status.ip.is_some()
+                    && self.snap.failure.as_ref().is_some_and(|(ssid, error)| {
+                        *error == Failure::DhcpBusy && self.snap.status.ssid.as_ref() == Some(ssid)
+                    })
+                {
+                    self.snap.failure = None;
                 }
             }
             if let Some(a) = self.attempt.as_mut() {
