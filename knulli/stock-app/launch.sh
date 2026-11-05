@@ -43,8 +43,15 @@ unset SLOT_CORE LD_LIBRARY_PATH LD_PRELOAD LD_AUDIT
 export SLOT_ROOT="$root" SLOT_BOARD=tg5040 SLOT_STOCK_APP=1
 export PATH=/usr/bin:/bin:/usr/sbin:/sbin
 # Never truncate an earlier log, even if a PID is reused after boot.
+log="$root/Logs/stock-app-$$.log"
+suffix=0
+while [ -e "$log" ] || [ -L "$log" ]; do
+    suffix=$((suffix + 1))
+    [ "$suffix" -le 1000 ] || refuse 'log collision limit reached'
+    log="$root/Logs/stock-app-$$-$suffix.log"
+done
 set -C
-exec >"$root/Logs/stock-app-$$.log" 2>&1
+exec >"$log" 2>&1
 printf '%s\n' 'Slot stock foreground test started; full presentation unverified'
 set +e
 "$root/System/slot"

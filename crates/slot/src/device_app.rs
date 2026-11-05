@@ -191,7 +191,7 @@ pub fn run() {
         let began = Instant::now();
         input.steer_with_stick(frontend.app().left_stick_dpad());
         frontend.advance(&mut input);
-        if cfg!(feature = "stock-tg5040") && (frontend.repairing() || frontend.powering_off()) {
+        if cfg!(feature = "stock-tg5040") && frontend.repairing() {
             eprintln!("slot: stock system action refused; saving and returning to supervisor");
             frontend.relaunch();
             return;
@@ -214,7 +214,9 @@ pub fn run() {
         }
         if frontend.powering_off() {
             frontend.poweroff();
-            return;
+            if !cfg!(feature = "stock-tg5040") {
+                return;
+            }
         }
         if slot::crash::stopping() {
             eprintln!("slot: told to stop, saving first");

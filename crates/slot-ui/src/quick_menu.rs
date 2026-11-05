@@ -132,10 +132,14 @@ pub enum QuickRow {
     RommStatus,
     RommPairedServer,
     RommDisconnect,
+    DeviceSettings,
+    DeviceRestart,
+    DeviceShutdown,
+    DeviceLeds,
 }
 
 impl QuickRow {
-    pub const ALL: [QuickRow; 123] = [
+    pub const ALL: [QuickRow; 127] = [
         QuickRow::FastForward,
         QuickRow::FastForwardSound,
         QuickRow::Screen,
@@ -259,15 +263,26 @@ impl QuickRow {
         QuickRow::RommStatus,
         QuickRow::RommPairedServer,
         QuickRow::RommDisconnect,
+        QuickRow::DeviceSettings,
+        QuickRow::DeviceRestart,
+        QuickRow::DeviceShutdown,
+        QuickRow::DeviceLeds,
     ];
 
-    pub const MAIN: [QuickRow; 6] = [
+    pub const MAIN: [QuickRow; 7] = [
         QuickRow::General,
         QuickRow::Screen,
         QuickRow::Game,
         QuickRow::Controls,
         QuickRow::Network,
+        QuickRow::DeviceSettings,
         QuickRow::About,
+    ];
+
+    pub const DEVICE: [QuickRow; 3] = [
+        QuickRow::DeviceRestart,
+        QuickRow::DeviceShutdown,
+        QuickRow::DeviceLeds,
     ];
 
     pub const GENERAL: [QuickRow; 8] = [
@@ -455,6 +470,9 @@ impl QuickRow {
 
     pub fn page(self) -> &'static [QuickRow] {
         match self {
+            QuickRow::DeviceRestart | QuickRow::DeviceShutdown | QuickRow::DeviceLeds => {
+                &QuickRow::DEVICE
+            }
             QuickRow::ScreenGeneral
             | QuickRow::ScreenGba
             | QuickRow::ScreenGbc
@@ -544,6 +562,7 @@ impl QuickRow {
 
     pub fn parent(self) -> Option<QuickRow> {
         match self.page()[0] {
+            QuickRow::DeviceRestart => Some(QuickRow::DeviceSettings),
             QuickRow::ScreenGeneral => Some(QuickRow::Screen),
             QuickRow::Brightness => Some(QuickRow::ScreenGeneral),
             QuickRow::GbaShader => Some(QuickRow::ScreenGba),
@@ -586,6 +605,7 @@ impl QuickRow {
 
     pub fn child(self) -> Option<QuickRow> {
         match self {
+            QuickRow::DeviceSettings => Some(QuickRow::DEVICE[0]),
             QuickRow::Screen => Some(QuickRow::SCREEN[0]),
             QuickRow::Game => Some(QuickRow::GAME[0]),
             QuickRow::Settings => Some(QuickRow::SETTINGS[0]),
@@ -637,6 +657,10 @@ impl QuickRow {
             QuickRow::Contrast | QuickRow::PlayContrast => "Contrast",
             QuickRow::DateTime => "Date & Time",
             QuickRow::About => "About",
+            QuickRow::DeviceSettings => "Device",
+            QuickRow::DeviceRestart => "Restart",
+            QuickRow::DeviceShutdown => "Shutdown",
+            QuickRow::DeviceLeds => "LEDs",
             QuickRow::GbaShader => "Shader",
             QuickRow::GbShader => "Shader",
             QuickRow::GbcShader => "Shader",
@@ -748,6 +772,7 @@ impl QuickRow {
             QuickRow::DateTime
                 | QuickRow::FetchArt
                 | QuickRow::About
+                | QuickRow::DeviceSettings
                 | QuickRow::Screen
                 | QuickRow::Game
                 | QuickRow::Resume
@@ -906,10 +931,11 @@ pub enum QuickValue {
     Ghosting,
     Https,
     Http,
+    Unavailable,
 }
 
 impl QuickValue {
-    pub const ALL: [QuickValue; 50] = [
+    pub const ALL: [QuickValue; 51] = [
         QuickValue::Speed1_5,
         QuickValue::Speed2,
         QuickValue::Speed3,
@@ -960,6 +986,7 @@ impl QuickValue {
         QuickValue::Ghosting,
         QuickValue::Https,
         QuickValue::Http,
+        QuickValue::Unavailable,
     ];
 
     pub const LEVELS: [QuickValue; 16] = [
@@ -1042,6 +1069,7 @@ impl QuickValue {
             QuickValue::Fit => "Fit",
             QuickValue::Classic => "Classic",
             QuickValue::FullScreen => "Full Screen",
+            QuickValue::Unavailable => "Unavailable",
             QuickValue::Mix => "Mix",
             QuickValue::Ghosting => "Ghosting",
             QuickValue::Https => "HTTPS",
@@ -1212,7 +1240,7 @@ pub(crate) fn quick_text_face(label: &str, colour: [u8; 3]) -> UndoFace {
     UndoFace { rgba, w, h: MENU_H }
 }
 
-pub fn quick_legend_faces(ink: [u8; 3]) -> [UndoFace; 8] {
+pub fn quick_legend_faces(ink: [u8; 3]) -> [UndoFace; 9] {
     let hint = Some(ink);
     [
         with_hint(button_face(ButtonLegend::B), "Back", hint, true),
@@ -1228,6 +1256,7 @@ pub fn quick_legend_faces(ink: [u8; 3]) -> [UndoFace; 8] {
         with_hint(button_face(ButtonLegend::A), "Set", hint, false),
         with_hint(button_face(ButtonLegend::X), "Clear", hint, false),
         with_hint(button_face(ButtonLegend::Y), "Reset All", hint, true),
+        with_hint(button_face(ButtonLegend::A), "Select", hint, false),
     ]
 }
 
@@ -1539,8 +1568,8 @@ pub struct QuickMenuFaces {
     pub labels: Vec<[(TexId, u32, u32); 2]>,
     pub pointer: (TexId, u32, u32),
     pub values: Vec<[(TexId, u32, u32); 2]>,
-    pub legend: [(TexId, u32); 8],
-    pub legend_light: [(TexId, u32); 8],
+    pub legend: [(TexId, u32); 9],
+    pub legend_light: [(TexId, u32); 9],
     pub descriptions: [(TexId, u32, u32); 2],
 }
 

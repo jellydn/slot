@@ -11,6 +11,8 @@ pub enum Failure {
     NoIp,
     Unsupported,
     SaveUnconfirmed,
+    DisconnectFailed,
+    DhcpBusy,
     Other,
 }
 
@@ -22,6 +24,8 @@ impl Failure {
             Failure::NoIp => "No IP Address",
             Failure::Unsupported => "Unsupported Security",
             Failure::SaveUnconfirmed => "Connected; Save Unconfirmed",
+            Failure::DisconnectFailed => "Could Not Disconnect",
+            Failure::DhcpBusy => "Network In Use",
             Failure::Other => "Could Not Connect",
         }
     }

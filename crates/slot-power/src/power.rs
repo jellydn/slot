@@ -75,6 +75,10 @@ impl Power {
         self.platform.request_restart()
     }
 
+    pub fn request_poweroff(&mut self) -> Result<(), String> {
+        self.platform.request_poweroff()
+    }
+
     pub fn repair_card(&mut self) -> ! {
         self.platform.repair_card()
     }

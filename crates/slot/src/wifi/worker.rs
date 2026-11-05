@@ -69,9 +69,14 @@ struct Core {
 
 impl Core {
     fn new(mut backend: Box<dyn Backend>, owner: u64) -> Core {
-        let saved = backend.saved();
         let scan_only = backend.scan_only();
         let stock_owned = backend.stock_owned();
+        // The stock supplicant can start after Slot; query it only once held.
+        let saved = if stock_owned {
+            Vec::new()
+        } else {
+            backend.saved()
+        };
         Core {
             owner,
             intent: Intent::Auto,
@@ -127,10 +132,7 @@ impl Core {
 
     fn command(&mut self, cmd: Cmd, now: Instant) {
         if self.snap.stock_owned
-            && matches!(
-                cmd,
-                Cmd::PowerOff | Cmd::Disconnect | Cmd::AutoJoin { .. } | Cmd::Forget(_)
-            )
+            && matches!(cmd, Cmd::PowerOff | Cmd::AutoJoin { .. } | Cmd::Forget(_))
         {
             return;
         }
@@ -216,8 +218,15 @@ impl Core {
             }
             Cmd::Disconnect => {
                 self.intent = Intent::Disconnected;
+                let ssid = self
+                    .snap
+                    .status
+                    .ssid
+                    .clone()
+                    .or_else(|| self.snap.attempt.as_ref().map(|(ssid, _)| ssid.clone()));
                 self.end_attempt();
                 self.backend.disconnect();
+                self.snap.failure = ssid.zip(self.backend.connection_error());
                 self.snap.attempt = None;
                 self.next_status = Some(now);
             }
@@ -256,6 +265,12 @@ impl Core {
 
     fn release(&mut self, block: bool) {
         self.end_attempt();
+        if !block && self.backend.keep_alive() {
+            self.scans = false;
+            self.next_scan = None;
+            self.snap.scan = None;
+            return;
+        }
         self.backend.stop();
         if block {
             self.backend.block();
@@ -330,6 +345,14 @@ impl Core {
         }
         if self.next_status.is_some_and(|t| now >= t) {
             self.snap.status = self.backend.status();
+            if self.snap.stock_owned && self.attempt.is_none() {
+                if let (Some(ssid), Some(error)) = (
+                    self.snap.status.ssid.clone(),
+                    self.backend.connection_error(),
+                ) {
+                    self.snap.failure = Some((ssid, error));
+                }
+            }
             if let Some(a) = self.attempt.as_mut() {
                 let temp = self.backend.temp_disabled(a.id);
                 let seen = self

@@ -119,6 +119,7 @@ fn the_quick_menu_renders_full_screen() {
     tap(&mut f, &mut input, Btn::Menu);
 
     let flat = [0x05, 0x05, 0x08];
+    let hidden = f.app().hidden_rows();
     let mut bar_on = QuickRow::MAIN[0];
     let mut tips = Vec::new();
     for (name, selected) in [
@@ -128,7 +129,7 @@ fn the_quick_menu_renders_full_screen() {
         ("network", QuickRow::Network),
         ("about", QuickRow::About),
     ] {
-        for _ in bar_on.position(&[])..selected.position(&[]) {
+        for _ in bar_on.position(&hidden)..selected.position(&hidden) {
             tap(&mut f, &mut input, Btn::Down);
         }
         bar_on = selected;
@@ -141,8 +142,8 @@ fn the_quick_menu_renders_full_screen() {
         );
 
         let mut spans = Vec::new();
-        for row in QuickRow::MAIN {
-            let top = quick_row_top(row, &[]) as usize;
+        for row in QuickRow::MAIN.into_iter().filter(|r| !hidden.contains(r)) {
+            let top = quick_row_top(row, &hidden) as usize;
             let from = match row == selected {
                 true => {
                     let p = beside(name, pointer(&px, top));
@@ -186,7 +187,7 @@ fn the_quick_menu_renders_full_screen() {
         "the pointer moves from row to row: {tips:?}"
     );
 
-    for _ in QuickRow::General.position(&[])..QuickRow::About.position(&[]) {
+    for _ in QuickRow::General.position(&hidden)..QuickRow::About.position(&hidden) {
         tap(&mut f, &mut input, Btn::Up);
     }
     tap(&mut f, &mut input, Btn::A);
@@ -781,7 +782,7 @@ fn about_shows_x_restart() {
     f.upload_faces(&mut c);
     let mut input = Script(VecDeque::new());
     tap(&mut f, &mut input, Btn::Menu);
-    for _ in 0..QuickRow::About.position(&[]) {
+    for _ in 0..QuickRow::About.position(&f.app().hidden_rows()) {
         tap(&mut f, &mut input, Btn::Down);
     }
     tap(&mut f, &mut input, Btn::A);

@@ -224,9 +224,16 @@ pub fn page_rows(snap: &Snapshot, ssid: &str, off: bool) -> Vec<PageRow> {
     let saved = snap.saved.iter().any(|s| s.ssid == ssid);
     let rejected = matches!(&snap.failure, Some((s, Failure::WrongPassword)) if s == ssid);
     if !off && saved {
-        if !active(snap, ssid) {
+        // Stock can associate at boot without DHCP. Let the owner acquire a
+        // lease explicitly without requiring a Disconnect/Connect round trip.
+        let needs_lease = snap.stock_owned
+            && ours(snap, ssid)
+            && snap.status.state == State::Completed
+            && snap.status.ip.is_none()
+            && in_progress(snap, ssid).is_none();
+        if !active(snap, ssid) || needs_lease {
             rows.push(PageRow::Connect);
-        } else if !snap.stock_owned {
+        } else {
             rows.push(PageRow::Disconnect);
         }
     }
@@ -249,9 +256,6 @@ pub fn status_text(snap: &Snapshot, ssid: &str, off: bool) -> String {
         }
     }
     if let Some(p) = in_progress(snap, ssid) {
-        if snap.stock_owned && p == Phase::GettingIp {
-            return "Waiting for Stock DHCP".into();
-        }
         return p.label().into();
     }
     if !ours(snap, ssid) {
@@ -259,7 +263,6 @@ pub fn status_text(snap: &Snapshot, ssid: &str, off: bool) -> String {
     }
     match snap.status.state {
         State::Completed if snap.status.ip.is_some() => Phase::Connected.label(),
-        State::Completed if snap.stock_owned => "Waiting for Stock DHCP",
         State::Completed => Phase::GettingIp.label(),
         State::Handshake => Phase::Authenticating.label(),
         State::Associating => Phase::Connecting.label(),

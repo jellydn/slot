@@ -1,12 +1,278 @@
 # Stock Tina TG5040 candidate
 
-## Native TG5040 direction — owner-reported Wi-Fi, Tools and reboot pass
+## First-connect startup correction — host candidate, hardware pending
 
-The owner reports that Wi-Fi is working and Tools are usable from Slot. Stop
-speculative Wi-Fi changes. This does not establish a new association test,
-credential persistence or Internet access. Keep the working backend unchanged.
+The latest failed-state read-only capture had stock STATUS COMPLETED on the
+single current enabled profile 0, but no wlan0 IPv4/default route, udhcpc or
+owned lease-hook directory. Slot started at 8.87 seconds; supplicant at 9.59.
+Slot creates its Wi-Fi worker before its session mark at 435.7 milliseconds,
+about 0.28 seconds before that supplicant process starts. The first control
+request was not logged, so its actual scheduling/failure is not proven.
 
-### Selected SD startup logo (host candidate; hardware test pending)
+A host regression reproduces the immediate Could Not Connect symptom when
+the constructor's saved-profile query fails before stock control is ready.
+That error previously stayed latched after successful subsequent reads.
+Stock profile queries now begin with Hold, not worker construction. Real
+connection, save and rollback errors remain visible. Nonstock initialization
+is unchanged. A second verified UI defect offered only Disconnect for a
+stock-associated profile without an IP, preventing a first explicit DHCP
+request. That idle/unleased state now offers Connect; an acquisition in
+progress or a connected network still offers Disconnect.
+
+Owner test after a separately approved safe SD update: boot normally, open
+the saved network, select Connect and press A once without first selecting
+Disconnect or using Power recovery. This explicitly selects the saved
+profile and starts the existing bounded owned wlan0 DHCP lifecycle described
+below, including scoped address/default route and temporary DNS writes.
+Opening Wi-Fi alone does not start DHCP. Expect Getting IP then Connected
+and IPv4, or a visible bounded failure. On immediate failure or Network In
+Use, leave the state unchanged for read-only inspection. This candidate does
+not guarantee Internet access, auto-connect at boot or hardware reliability.
+No device network/power action or SD deployment was executed for this fix.
+Release remains held for the owner's first-attempt hardware result.
+
+## Owned wlan0 DHCP candidate — hardware test pending
+
+The captured failed reconnect had stock association COMPLETED but no IPv4,
+default route or udhcpc. Explicit Connect now starts one Slot-owned foreground
+client only after the selected profile is associated:
+`/sbin/udhcpc -f -n -i wlan0 -t 3 -T 3 -s /tmp/slot-dhcp-PID-COUNTER/hook`.
+Acquisition is limited to12 seconds after association. No stock client is
+adopted or killed. Existing/appearing competitors or unmanaged wlan0 IPv4/default
+routes fail closed with Network In Use. No default stock lease hook is used.
+
+The private0700 hook writes only validated lease-event data to its own tmpfs
+directory. Slot adds only the leased wlan0 address and optional wlan0 default
+route at metric42700. It temporarily writes DNS only through the existing
+resolver symlink to a regular single-link tmpfs file. If the verified factory
+`/etc/resolv.conf -> /tmp/resolv.conf` target is absent, an empty target is
+created; cleanup may leave this empty tmpfs file. No internal persistent
+resolver, firmware, service or startup script is edited. The pinned factory
+BusyBox1.27.2 supports the selected DHCP flags; its IPv4/oneline read flags
+were exercised offline in a network-isolated container. The current live
+resolver target was not checked because no authorized USB target was available.
+
+Renewal continues after leaving Wi-Fi. Disconnect, failure and normal Slot exit
+stop only Slot's child and remove only still-matching Slot address/route state;
+DNS restoration requires matching device/inode and expected bytes. If a stock
+client appears, Slot stops its own child but skips rollback rather than undoing
+that client's work. These checks cannot atomically exclude uncooperative stock
+writers. Stock keymon/hardwareservice remain untouched. A crash can leave an
+address behind; a subsequent Connect refuses unmanaged state rather than
+flushing it. Changed address/router/DNS on renewal fails closed and needs an
+explicit reconnect; ordinary same-configuration lease renewal is supported.
+No IPv6, classless-route or multi-router handoff is added. Connected means
+association plus owned IPv4 lease, not verified Internet access.
+
+New profiles persist only after matching association and valid lease. Failure
+rolls back only the transient profile/policy changes; failed persistence is
+visible. Nonstock backend behavior is unchanged. The visible group is Device;
+selected Restart/Shutdown use A, B Back, X/Y inactive. Stock Lid Power Off is
+Unavailable with no actionable timeout; nonstock lid behavior remains intact.
+
+Owner test after safe SD update: boot normally, open saved Wi-Fi network and
+select Disconnect A if connected, then Connect A once, without Power recovery.
+This action starts the above one-child DHCP acquisition/renewal, temporary hook,
+wlan0 address/route and tmpfs DNS writes. Expect Getting IP then Connected/IP,
+or a bounded visible failure. Do not repeatedly retry Network In Use; report it
+for read-only ownership inspection. Leave/reopen Wi-Fi, then repeat explicit
+Disconnect/Connect to check stale-address suppression. No agent executed a
+live association, DHCP/network/service operation or device power action.
+Safe rollback is the exact backed-up SD delta with the handheld shut down and
+card on Mac; never hot-replace through ADB. Release remains held for owner test.
+
+## Captured deployed-baseline failure — associated, no IPv4 or DHCP client
+
+Owner confirms Disconnect works but Connect only recovers after the owner's
+Power off/on sequence. A read-only sample captured that failure before recovery:
+uptime98.57 seconds, wlan0 up, stock control-socket STATUS COMPLETED with
+WPA2-PSK, no IPv4 and no default route. No udhcpc process was found by comm or
+the first two argv entries. This establishes a missing DHCP acquisition owner
+in that sample, not a password failure or proof of why a prior client exited.
+
+Supplicant PID2440, parent1, start952 ticks, executable /usr/sbin/wpa_supplicant,
+cwd /, argv wpa_supplicant -iwlan0 -Dnl80211
+-c/etc/wifi/wpa_supplicant.conf -I/etc/wifi/wpa_supplicant_overlay.conf
+-O/etc/wifi/sockets. Keymon PID1969/start704 and hardwareservice
+PID1988/start721 remain live. This boot's supplicant invocation differs from
+the earlier daemonized sample; do not merge the two boot timelines.
+The default DHCP hook remains1499 bytes, SHA256
+11b5bda753a63a2347ac8f136f642509a396ffff1dfb8b25a3c0a4b9a36f48dd.
+Bounded current Slot log error-phrase counts were zero, not proof about UI
+history. No SSIDs, credentials, addresses or raw log lines were reported.
+
+The deployed baseline's SELECT_NETWORK starts no DHCP client. Its original
+host mock supplies a retained lease and did not reproduce this failure. The
+new candidate above instead tests acquisition without a retained lease,
+competing owners, bounded failure and renewal. No agent live acquisition,
+address, route or DNS change was performed.
+
+On stock TG5040, Lid Power Off now reads Unavailable, shows Back only, and
+ignores A/left/right without changing the stored lid timeout. It remains in
+General; no new Auto power off/inactivity timer is added. Nonstock lid timeout
+choices and behavior are unchanged. Host candidate only; no SD deployment or
+live network/power/service/internal operation is included. Release held.
+
+## Disconnect action — host candidate, not a DHCP ownership repair
+
+The owner now requests Disconnect for easy connection testing. On the saved
+network page, select Disconnect and press A; B returns. This sends only the
+supplicant DISCONNECT command through the existing stock control socket with
+the existing bounded request timeout. It preserves saved credentials and
+auto-join policy, does not save/delete profiles, start/stop DHCP, flush an
+address/route, edit DNS, toggle the radio, or signal stock services. Only an
+unfinished Slot join may use the existing transient-profile rollback.
+
+After disassociation the page reports Not Connected / IP None and offers
+Connect using the saved profile. A retained OS lease is not displayed as a
+live association. A rejected disconnect reports Could Not Disconnect and
+permits retry without pretending the association ended. Connect remains the
+existing association/external-DHCP path, not a guarantee of a fresh lease or
+Internet connectivity. No live disconnect/reconnect was executed by the agent.
+
+This is a session-level disconnect, not a persistent radio-off or auto-join-off
+setting. A stock wake/service restart can reconnect independently; Slot does
+not fight that with a loop. Hardware acceptance must cover this limitation.
+The A-button power corrections remain included and host-tested; no power
+command, SD write or internal modification is part of this verification.
+
+### Read-only duplicate-client trace
+
+Both live wlan0 udhcpc clients had exactly three arguments (udhcpc -i wlan0),
+cwd /usr/trimui/bin, parent1, and null standard descriptors. Start ticks140481
+and140498 show near-adjacent starts, not the original launchers. The observed
+keymon and hardwareservice processes predate them. Their live binaries exactly
+match the retained factory audit:
+
+- keymon SHA2568f81fbc8ef866c2bcc0ca652f759f27167315e4c402b08cf8184669ebede33fa.
+- hardwareservice SHA256d330c29a02863e211b25c03d5842b3bf0a4f8cf4321f49bea5adf9339247e489.
+
+Offline disassembly confirms both binaries pass the literal udhcpc -i wlan0 &
+to system: keymon branch0x402178 references string0x40ad90; hardwareservice
+call0x401ba0 references string0x409780. Both also contain supplicant/radio
+restart commands. The supplicant's live argv matches these daemonized helper
+paths, not the procd init script's overlay-config invocation. These are
+concrete competing stock launch paths; they do not prove which path created
+each orphaned client or the earlier outage's cause. Current wifi_turn_on/off
+request markers were absent. No process was killed, helper invoked or marker
+changed. A safe DHCP ownership repair needs a reviewed handoff of these paths,
+not a third Slot client or blanket killall. Release remains held.
+
+## Device settings A-button correction — owner UI test pending
+
+Owner now confirms X Restart and Y Shutdown work on hardware, superseding the
+earlier warm Restart failure. Cold boot, selected SD splash and A/B also have
+owner passes at their stated scopes. Wi-Fi/Tools previously passed, but the
+owner now reports Waiting for Stock DHCP / IP Address None. Wi-Fi is not
+currently considered passed. Release remains held.
+
+On stock TG5040, Menu > Device settings contains Restart, Shutdown and LEDs.
+Select either Restart or Shutdown, then press A. Both rows show A Select and
+B Back. X, Y, the restart chord and arrows do not request power. Opening the
+group does not activate its selected row. B returns to the group. About is
+information-only, with B Back; it no longer handles stock X/Y or the restart
+chord. Nonstock platforms keep their previous About
+behavior and do not show the new group. Both operations retain the proven
+lifecycle: flush the resume state and settle saves before a single init request
+(`/sbin/reboot` or `/sbin/poweroff`), without force flags or module unloads.
+The existing brief shutdown screen precedes the request. A refused command
+stays on its Device settings row with visible failure and permits retry.
+An accepted request stays pending in Slot, even if init is delayed; it neither
+retries nor returns to MainUI. No device power command ran during host verification.
+
+LEDs explicitly reads Unavailable, with Back only. This is not an off toggle
+and does not claim physical lights are off. The desired policy remains off;
+no setting is persisted until there is a safe writer contract. Slot Fn actions
+remain unwired. No new LED writer, service control or firmware edit is included.
+
+Matched factory runtrimui.sh configures effect_enable=1, white FFFFFF,
+effect_cycles_lr=1, effect_duration_lr=1000 and effect_lr=1 after System/starts
+and before its main service/menu loop. This is a concrete source of a boot
+flash before the foreground Slot dispatcher; the owner's exact live flash
+writer/timing was not traced. The live internal scene-rgb-led.sh hash matches
+pinned Spruce revision 6861c2b56ef23013dfdb7c87a00959825a8f68d4. It invokes
+Spruce helpers, uses a temporary leds_forced_off flag, and notes that disabling
+the effect engine freezes the last colour. Slot must not call it or fight it
+with repeated sysfs writes. A post-start off request cannot undo an earlier
+visible flash. Suppressing that early effect would need a separately reviewed
+startup/ownership scope, not an unverified SD adapter or broad daemon kill.
+
+A reproduced launcher fault could prevent Slot starting after PID reuse:
+noclobber refused an existing `Logs/stock-app-PID.log`, before Slot ran.
+The launcher now chooses a bounded unused suffix and retains noclobber, keeping
+old logs unchanged. The Linux mock failed on the old launcher and passes with
+this fix. Its connection to the owner's warm failure is still a hypothesis;
+the existing bounded supervisor/fallback and cold-boot hooks remain unchanged.
+
+One-logo request is separate. The owner photo visually matches the retained
+white pixel-art handheld/face extracted from internal /dev/mmcblk0p1:
+/bootlogo.bmp (SHA256
+`edb148fc5f20f55ecf52bd8ff7c5873ff0e7351e49a1b025f58eda8a0903bd1b`).
+This is artwork agreement, not photograph byte equality or an instruction-level
+trace of the renderer. Pinned Spruce SmartPro installer writes that FAT file.
+An SD overlay cannot erase an internal frame already displayed. Internal
+replacement requires separate informed approval after bounded p1 backup and
+recovery validation, then a pinned selected-art 1280x720 24-bit same-size
+candidate and exact one-file write review. Do not run the old installer or
+make automatic internal changes when Slot's SD art changes.
+
+After a reviewed safe card update, owner tests must navigate Device settings
+and verify Restart A returns to Slot with SD, then Shutdown A and a normal
+power-on returns to Slot. Capture pre/post uptime if warm Restart fails.
+This candidate is host-only; no device launch, power test, firmware change or
+SD write is part of its verification. Sleep/wake and physical LED-off remain
+unverified; Fn actions and the existing Wi-Fi/Tools backend are unchanged.
+
+## Current Wi-Fi failure — incomplete read-only diagnosis; no takeover
+
+The owner photo reports Waiting for Stock DHCP / IP Address None. A fresh
+single authorized ADB target reported kernel4.9.191 and uptime705.74 seconds.
+At that sample wlan0 operstate was down, with no IPv4 address or wlan0 route.
+No matching supplicant/udhcpc process comm appeared in the narrow metadata
+sample. The default-path wpa_cli query returned no allowlisted state; its
+socket/path and exit status were not established, so this is not evidence of
+a completed supplicant STATUS query or proof that its daemon was absent.
+ADB then had zero targets before an exact executable/argv, stock-socket
+STATUS and allowlisted current-log follow-up could run. /Volumes/TSP was not
+mounted. No serials, SSIDs, credentials or unrelated logs were reported.
+
+The observed sample is not the photo's captured association phase. It cannot
+establish whether radio/association dropped, DHCP never started, or a client
+failed after association. Station currently sends SELECT_NETWORK but starts
+no DHCP client; it relies on another owner. This is a real ownership gap, not
+proof of which failure occurred now. Association without a valid IPv4 address
+is not connection success. The existing host test covers bounded NoIp and
+profile rollback without saving a failed profile; it does not test hardware.
+
+### Exact next evidence and native lease implementation gate
+
+Reconnect for the same read-only scope: STATUS using /etc/wifi/sockets/wlan0,
+allowlisted state/address only; wlan0 link/address/route metadata; exact
+supplicant and udhcpc executable/interface/parent/PID-file/lease-script
+metadata; current Slot fd1 log failure-phrase counts only. Inspect the exact
+lease helper and procd ownership needed for a bounded handoff, without reading
+profiles or emitting credentials. Do not change network state during this step.
+
+If wlan0 is associated but lacks a lease, distinguish an existing verified
+client from no client and from ambiguous ownership. Never kill/adopt an unknown
+client, signal a PID from a stale file, invoke stock's all-client restart, or
+reuse the H700 helper. A native candidate must own one foreground wlan0 child
+by its process handle, bound acquisition, retain renewals, reap/stop only that
+child, and expose lease failure without committing a bad profile. A competing
+wlan0 owner must fail closed, not trigger a second client. A lease hook must
+validate interface and IPv4 inputs, change only its owned address/routes, and
+conditionally restore resolver state only if nobody else changed it. DNS and
+route changes are explicit scope, not harmless association metadata.
+
+Before enabling that candidate, mock lease timeout/exit, stale PID reuse,
+other-interface clients, competing wlan0 client, wrong interface, renew/rebind,
+retry/cancellation and route/resolver rollback. Report the exact command/hook,
+existing owner handoff and affected address/routes/resolver before requesting
+one bounded live association/lease test. Those operations are not authorized
+yet. No native DHCP writer or speculative radio repair is enabled in this
+A-button-only candidate. Early logo/LED work remains separate.
+
+### Selected SD startup logo (owner hardware PASS; earlier frame unresolved)
 
 Stock startup deliberately refuses the internal boot-logo installer. It also
 did not draw Slot's selected image. The SD renderer now draws that selection
@@ -25,8 +291,9 @@ This is a later application splash, not a replacement for an early firmware
 frame. Spruce's SmartPro installer at revision
 `6861c2b56ef23013dfdb7c87a00959825a8f68d4` writes internal
 `/dev/mmcblk0p1`'s `bootlogo.bmp`. That explains a possible early Spruce source,
-but this device's internal image has not been inspected. No internal writes
-are included or authorized. An early Spruce frame can remain before Slot.
+but the extracted current internal BMP is not Spruce-branded, as recorded above.
+No internal writes are included or authorized. The owner still sees an early
+Spruce frame before Slot; its exact source remains unresolved.
 
 Frozen deployed baseline ZIP SHA256:
 `b452d2891466e25f3e5140b1e669cd1e915e84b763e923b4f82618242ce066bc`.

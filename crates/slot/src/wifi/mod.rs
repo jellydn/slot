@@ -2,6 +2,7 @@ pub mod attempt;
 mod fake;
 pub mod sp;
 pub mod stock;
+pub mod stock_dhcp;
 pub mod stock_station;
 mod worker;
 pub mod wpa;
@@ -44,6 +45,9 @@ pub struct Status {
 }
 
 pub trait Backend: Send {
+    fn keep_alive(&self) -> bool {
+        false
+    }
     fn stock_owned(&self) -> bool {
         false
     }

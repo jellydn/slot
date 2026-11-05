@@ -263,6 +263,7 @@ struct StationState {
     profiles: Vec<Profile>,
     current: u32,
     lease: bool,
+    disconnected: bool,
     saved: Vec<Profile>,
     commands: Vec<String>,
     refuse: Option<String>,
@@ -285,6 +286,7 @@ impl Default for StationState {
             ],
             current: 2,
             lease: true,
+            disconnected: false,
             saved: Vec::new(),
             commands: Vec::new(),
             refuse: None,
@@ -332,6 +334,12 @@ impl Control for StationMock {
                     text
                 }
                 "STATUS" => {
+                    if state.disconnected {
+                        // The interface may retain a lease after disassociation.
+                        self.replies
+                            .push_back("wpa_state=DISCONNECTED\nip_address=192.168.5.87\n".into());
+                        return Ok(());
+                    }
                     let ssid = state
                         .profiles
                         .iter()
@@ -357,10 +365,15 @@ impl Control for StationMock {
                     "42\n".into()
                 }
                 "SELECT_NETWORK" => {
+                    state.disconnected = false;
                     state.current = id;
                     for row in &mut state.profiles {
                         row.enabled = row.id == id;
                     }
+                    "OK\n".into()
+                }
+                "DISCONNECT" => {
+                    state.disconnected = true;
                     "OK\n".into()
                 }
                 "ENABLE_NETWORK" | "DISABLE_NETWORK" => {
@@ -412,6 +425,80 @@ fn station() -> (
     )
 }
 
+struct LeaseClient(Arc<Mutex<Result<Option<String>, slot::wifi::Failure>>>);
+impl slot::wifi::stock_dhcp::Client for LeaseClient {
+    fn poll(&mut self, _now: Instant) -> Result<Option<String>, slot::wifi::Failure> {
+        self.0.lock().unwrap().clone()
+    }
+    fn stop(&mut self) {
+        *self.0.lock().unwrap() = Ok(None);
+    }
+}
+
+#[test]
+fn stock_join_without_a_stock_dhcp_client_waits_for_owned_lease_before_saving() {
+    use slot::wifi::{Failure, Phase};
+    let state = Arc::new(Mutex::new(StationState {
+        lease: false,
+        ..Default::default()
+    }));
+    let lease = Arc::new(Mutex::new(Ok(None)));
+    let backend = slot::wifi::stock_station::Station::with_dhcp(
+        StationMock {
+            state: state.clone(),
+            replies: VecDeque::new(),
+        },
+        Box::new(LeaseClient(lease.clone())),
+    );
+    let mut wifi = Wifi::inline(Box::new(backend));
+    let now = Instant::now();
+    wifi.send(Cmd::Hold);
+    wifi.send(Cmd::Join {
+        ssid: "New".into(),
+        password: "example-only".into(),
+        hidden: false,
+    });
+    wifi.poll(now);
+    assert_eq!(
+        wifi.snapshot().attempt.as_ref().unwrap().1,
+        Phase::GettingIp
+    );
+    assert!(wifi.snapshot().status.ip.is_none());
+    assert!(state.lock().unwrap().saved.is_empty());
+    *lease.lock().unwrap() = Ok(Some("192.0.2.37".into()));
+    wifi.poll(now + Duration::from_secs(1));
+    assert_eq!(wifi.snapshot().status.ip.as_deref(), Some("192.0.2.37"));
+    assert!(state.lock().unwrap().saved.iter().any(|p| p.ssid == "New"));
+    wifi.send(Cmd::Release);
+    wifi.poll(now + Duration::from_secs(2));
+    assert!(
+        wifi.snapshot().held,
+        "renewal must survive closing the Wi-Fi page"
+    );
+    assert!(wifi.snapshot().status.ip.is_some());
+    wifi.send(Cmd::Disconnect);
+    wifi.poll(now + Duration::from_secs(3));
+    assert!(wifi.snapshot().status.ip.is_none());
+    wifi.send(Cmd::Connect(42));
+    wifi.poll(now + Duration::from_secs(4));
+    assert!(
+        wifi.snapshot().status.ip.is_none(),
+        "old address must not complete reconnect"
+    );
+    *lease.lock().unwrap() = Err(Failure::DhcpBusy);
+    wifi.poll(now + Duration::from_secs(5));
+    assert_eq!(
+        wifi.snapshot().failure.as_ref().unwrap().1,
+        Failure::DhcpBusy
+    );
+    wifi.send(Cmd::Connect(42));
+    wifi.poll(now + Duration::from_secs(6));
+    *lease.lock().unwrap() = Ok(Some("192.0.2.38".into()));
+    wifi.poll(now + Duration::from_secs(7));
+    assert_eq!(wifi.snapshot().status.ip.as_deref(), Some("192.0.2.38"));
+    assert!(wifi.snapshot().failure.is_none());
+}
+
 #[test]
 fn stock_join_saves_only_confirmed_profile_and_preserves_existing_profiles_and_policy() {
     let (mut backend, state) = station();
@@ -438,7 +525,6 @@ fn stock_join_saves_only_confirmed_profile_and_preserves_existing_profiles_and_p
     drop(s);
     backend.stop();
     backend.block();
-    backend.disconnect();
     backend.forget(2);
     backend.set_auto_join(2, false);
     assert!(state.lock().unwrap().commands.is_empty());
@@ -468,7 +554,7 @@ fn stock_association_without_ip_times_out_without_dhcp_takeover_or_saved_bad_pro
     );
     assert_eq!(
         slot::networks::status_text(wifi.snapshot(), "New", false),
-        "Waiting for Stock DHCP"
+        "Getting IP"
     );
     wifi.poll(now + Duration::from_secs(21));
     assert_eq!(wifi.snapshot().failure, Some(("New".into(), Failure::NoIp)));
@@ -552,7 +638,7 @@ fn stock_unsupported_security_and_invalid_credentials_cannot_mutate_networks() {
 }
 
 #[test]
-fn stock_station_ui_exposes_join_but_not_radio_autojoin_disconnect_or_forget() {
+fn stock_station_ui_exposes_join_and_disconnect_but_not_radio_autojoin_or_forget() {
     use slot::networks::{page_rows, PageRow};
     let (backend, state) = station();
     let mut wifi = Wifi::inline(Box::new(backend));
@@ -561,7 +647,7 @@ fn stock_station_ui_exposes_join_but_not_radio_autojoin_disconnect_or_forget() {
     wifi.poll(now);
     assert_eq!(
         page_rows(wifi.snapshot(), "Old", false),
-        [PageRow::Status, PageRow::Ip]
+        [PageRow::Status, PageRow::Ip, PageRow::Disconnect]
     );
     assert_eq!(
         page_rows(wifi.snapshot(), "Manual", false),
@@ -570,7 +656,6 @@ fn stock_station_ui_exposes_join_but_not_radio_autojoin_disconnect_or_forget() {
     let before = state.lock().unwrap().commands.len();
     for command in [
         Cmd::PowerOff,
-        Cmd::Disconnect,
         Cmd::Forget(2),
         Cmd::AutoJoin { id: 2, on: false },
     ] {
@@ -580,10 +665,106 @@ fn stock_station_ui_exposes_join_but_not_radio_autojoin_disconnect_or_forget() {
     assert_eq!(state.lock().unwrap().commands.len(), before);
     assert!(wifi.snapshot().held);
     let d = common::tmp_root_with_carts(&[]);
+    slot_store::write_slot_state(
+        d.path(),
+        &slot_store::SlotState {
+            clock_set: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
     let (mut app, _) = common::app_booting_at(d.path(), common::CLOCK_IS_SET);
     app.set_wifi(wifi);
     assert!(app.hidden_rows().contains(&slot_ui::QuickRow::WifiPower));
     assert!(!app.hidden_rows().contains(&slot_ui::QuickRow::Networks));
+    let press = |app: &mut slot::app::App, btn| {
+        app.apply(slot_input::Action::GbaDown(btn));
+        app.apply(slot_input::Action::GbaUp(btn));
+    };
+    use slot_input::{Action, Btn};
+    use slot_ui::QuickRow;
+    app.apply(Action::QuickMenu);
+    for row in [QuickRow::General, QuickRow::Wifi, QuickRow::Networks] {
+        for _ in 0..24 {
+            if app.quick_menu() == Some(row) {
+                break;
+            }
+            press(&mut app, Btn::Down);
+        }
+        assert_eq!(app.quick_menu(), Some(row));
+        press(&mut app, Btn::A);
+    }
+    press(&mut app, Btn::A);
+    press(&mut app, Btn::Down);
+    press(&mut app, Btn::Down);
+    assert_eq!(app.network_action(), Some("Disconnect"));
+    press(&mut app, Btn::A);
+    app.tick_ms(app.now() + 4000);
+    assert_eq!(app.network_action(), Some("Connect"));
+    assert!(app.wifi().status.ip.is_none());
+    assert_eq!(app.wifi().saved.len(), 2);
+}
+
+#[test]
+fn stock_disconnect_preserves_profiles_and_can_reconnect_without_a_password() {
+    use slot::networks::{page_rows, status_text, PageRow};
+    let (backend, state) = station();
+    let mut wifi = Wifi::inline(Box::new(backend));
+    let now = Instant::now();
+    wifi.send(Cmd::Hold);
+    wifi.poll(now);
+    wifi.send(Cmd::Disconnect);
+    wifi.poll(now + Duration::from_secs(1));
+    assert_eq!(status_text(wifi.snapshot(), "Old", false), "Not Connected");
+    assert!(wifi.snapshot().status.ip.is_none());
+    assert_eq!(
+        page_rows(wifi.snapshot(), "Old", false),
+        [PageRow::Status, PageRow::Ip, PageRow::Connect]
+    );
+    {
+        let s = state.lock().unwrap();
+        assert_eq!(
+            s.profiles
+                .iter()
+                .map(|p| (p.id, p.enabled))
+                .collect::<Vec<_>>(),
+            [(2, true), (9, false)]
+        );
+        assert!(s.saved.is_empty());
+        assert!(s.commands.iter().any(|c| c == "DISCONNECT"));
+        assert!(!s
+            .commands
+            .iter()
+            .any(|c| c.starts_with("REMOVE_NETWORK") || c == "SAVE_CONFIG"));
+    }
+    wifi.send(Cmd::Connect(2));
+    wifi.poll(now + Duration::from_secs(2));
+    assert_eq!(status_text(wifi.snapshot(), "Old", false), "Connected");
+    assert!(wifi.snapshot().failure.is_none());
+}
+
+#[test]
+fn refused_stock_disconnect_is_visible_and_retry_does_not_forget_the_network() {
+    use slot::networks::status_text;
+    let (backend, state) = station();
+    let mut wifi = Wifi::inline(Box::new(backend));
+    let now = Instant::now();
+    wifi.send(Cmd::Hold);
+    wifi.poll(now);
+    state.lock().unwrap().refuse = Some("DISCONNECT".into());
+    wifi.send(Cmd::Disconnect);
+    wifi.poll(now + Duration::from_secs(1));
+    assert_eq!(
+        status_text(wifi.snapshot(), "Old", false),
+        "Could Not Disconnect"
+    );
+    assert!(wifi.snapshot().status.ip.is_some());
+    state.lock().unwrap().refuse = None;
+    wifi.send(Cmd::Disconnect);
+    wifi.poll(now + Duration::from_secs(2));
+    assert_eq!(status_text(wifi.snapshot(), "Old", false), "Not Connected");
+    assert_eq!(wifi.snapshot().saved.len(), 2);
+    assert!(wifi.snapshot().failure.is_none());
 }
 
 #[test]
@@ -627,4 +808,61 @@ fn stock_duplicate_ssid_on_another_profile_does_not_confirm_the_join() {
     assert_eq!(backend.connection_error(), Some(slot::wifi::Failure::Other));
     backend.finish_connect();
     assert!(state.lock().unwrap().saved.is_empty());
+}
+
+#[test]
+fn stock_startup_before_supplicant_ready_allows_first_explicit_connect_without_disconnect() {
+    use slot::networks::{page_rows, PageRow};
+    use slot::wifi::Phase;
+    let state = Arc::new(Mutex::new(StationState {
+        profiles: vec![Profile {
+            id: 0,
+            ssid: "Synthetic".into(),
+            enabled: true,
+        }],
+        current: 0,
+        lease: false,
+        refuse: Some("LIST_NETWORKS".into()),
+        ..Default::default()
+    }));
+    let lease = Arc::new(Mutex::new(Ok(None)));
+    let station = slot::wifi::stock_station::Station::with_dhcp(
+        StationMock {
+            state: state.clone(),
+            replies: VecDeque::new(),
+        },
+        Box::new(LeaseClient(lease.clone())),
+    );
+    // Slot starts before the stock control endpoint, which becomes available
+    // before the owner opens Wi-Fi. Association already exists but no lease.
+    let mut wifi = Wifi::inline(Box::new(station));
+    state.lock().unwrap().refuse = None;
+    let now = Instant::now();
+    wifi.send(Cmd::Hold);
+    wifi.poll(now);
+    wifi.poll(now + Duration::from_secs(1));
+    assert!(
+        wifi.snapshot().failure.is_none(),
+        "startup error must not be latched"
+    );
+    assert!(wifi.snapshot().status.ip.is_none());
+    assert_eq!(
+        page_rows(wifi.snapshot(), "Synthetic", false),
+        [PageRow::Status, PageRow::Ip, PageRow::Connect]
+    );
+    // Only explicit Connect requests DHCP; opening the page does not.
+    wifi.send(Cmd::Connect(0));
+    wifi.poll(now + Duration::from_secs(2));
+    assert_eq!(
+        wifi.snapshot().attempt.as_ref().unwrap().1,
+        Phase::GettingIp
+    );
+    *lease.lock().unwrap() = Ok(Some("192.0.2.37".into()));
+    wifi.poll(now + Duration::from_secs(3));
+    assert_eq!(wifi.snapshot().status.ip.as_deref(), Some("192.0.2.37"));
+    assert!(wifi.snapshot().failure.is_none());
+    assert_eq!(
+        page_rows(wifi.snapshot(), "Synthetic", false),
+        [PageRow::Status, PageRow::Ip, PageRow::Disconnect]
+    );
 }

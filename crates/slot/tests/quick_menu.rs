@@ -563,6 +563,105 @@ fn a_on_about_opens_the_label_and_b_comes_back_to_the_menu() {
 }
 
 #[test]
+fn stock_device_settings_is_explicit_and_about_is_information_only() {
+    let (_d, mut a, _) = on_carousel();
+    assert!(a.hidden_rows().contains(&QuickRow::DeviceSettings));
+    a.set_stock_power_owned();
+    assert!(!a.hidden_rows().contains(&QuickRow::DeviceSettings));
+    open_at(&mut a, QuickRow::About);
+    press(&mut a, Btn::A);
+    assert!(!a.restart_chord());
+    for action in [
+        Action::GbaDown(Btn::X),
+        Action::GbaDown(Btn::Y),
+        Action::Restart,
+    ] {
+        a.apply(action);
+        assert!(!a.restarting() && !a.powering_off() && !a.relaunching());
+    }
+    press(&mut a, Btn::B);
+    press(&mut a, Btn::B);
+    open_at(&mut a, QuickRow::DeviceRestart);
+    assert!(!a.restart_chord());
+    for btn in [Btn::X, Btn::Left, Btn::Right, Btn::Y] {
+        press(&mut a, btn);
+        assert!(!a.restarting() && !a.powering_off());
+    }
+    a.apply(Action::Restart);
+    assert!(!a.restarting() && !a.powering_off());
+    press(&mut a, Btn::B);
+    assert_eq!(a.quick_menu(), Some(QuickRow::DeviceSettings));
+    press(&mut a, Btn::A);
+    assert_eq!(a.quick_menu(), Some(QuickRow::DeviceRestart));
+    press(&mut a, Btn::A);
+    assert!(a.restarting() && !a.powering_off());
+}
+
+#[test]
+fn stock_shutdown_uses_a_and_b_returns_without_power_requests() {
+    let (_d, mut a, _) = on_carousel();
+    a.set_stock_power_owned();
+    open_at(&mut a, QuickRow::DeviceShutdown);
+    assert!(!a.restart_chord());
+    for btn in [Btn::X, Btn::Y, Btn::Left, Btn::Right] {
+        press(&mut a, btn);
+        assert!(!a.restarting() && !a.powering_off());
+    }
+    a.apply(Action::Restart);
+    assert!(!a.restarting() && !a.powering_off());
+    press(&mut a, Btn::B);
+    assert_eq!(a.quick_menu(), Some(QuickRow::DeviceSettings));
+    press(&mut a, Btn::A);
+    press(&mut a, Btn::Down);
+    assert_eq!(a.quick_menu(), Some(QuickRow::DeviceShutdown));
+    press(&mut a, Btn::A);
+    assert!(a.powering_off() && !a.restarting());
+}
+
+#[test]
+fn both_stock_power_rows_show_only_back_and_select_legends() {
+    let (_d, mut a, _) = on_carousel();
+    a.set_stock_power_owned();
+    fake_faces(&mut a);
+    for row in [QuickRow::DeviceRestart, QuickRow::DeviceShutdown] {
+        open_at(&mut a, row);
+        let out = frame(&a);
+        assert!(placed(&out, 400).is_some(), "B Back is missing");
+        assert!(placed(&out, 408).is_some(), "A Select is missing");
+        assert!(placed(&out, 404).is_none(), "X Restart is still drawn");
+        press(&mut a, Btn::B);
+        press(&mut a, Btn::B);
+        press(&mut a, Btn::B);
+    }
+}
+
+#[test]
+fn unsupported_led_control_cannot_change_power_or_persist_a_false_off_state() {
+    let (d, mut a, _) = on_carousel();
+    a.set_stock_power_owned();
+    open_at(&mut a, QuickRow::DeviceLeds);
+    let before = std::fs::read(d.path().join("Config/slot.state")).unwrap();
+    assert_eq!(
+        a.quick_value(QuickRow::DeviceLeds),
+        Some(QuickValue::Unavailable)
+    );
+    assert!(!a.restart_chord());
+    for btn in [Btn::A, Btn::Left, Btn::Right, Btn::X, Btn::Y] {
+        press(&mut a, btn);
+        assert_eq!(a.quick_menu(), Some(QuickRow::DeviceLeds));
+        assert!(!a.restarting() && !a.powering_off() && !a.relaunching());
+    }
+    a.apply(Action::Restart);
+    assert!(!a.restarting());
+    assert_eq!(
+        std::fs::read(d.path().join("Config/slot.state")).unwrap(),
+        before
+    );
+    press(&mut a, Btn::B);
+    assert_eq!(a.quick_menu(), Some(QuickRow::DeviceSettings));
+}
+
+#[test]
 fn x_on_about_restarts() {
     let (_d, mut a, _) = on_carousel();
     open_at(&mut a, QuickRow::About);
@@ -589,7 +688,14 @@ fn select_start_on_about_still_restarts() {
 fn network_sits_between_controls_and_about() {
     let at = |row| QuickRow::MAIN.iter().position(|r| *r == row);
     assert_eq!(at(QuickRow::Network), at(QuickRow::Controls).map(|i| i + 1));
-    assert_eq!(at(QuickRow::About), at(QuickRow::Network).map(|i| i + 1));
+    assert_eq!(
+        at(QuickRow::DeviceSettings),
+        at(QuickRow::Network).map(|i| i + 1)
+    );
+    assert_eq!(
+        at(QuickRow::About),
+        at(QuickRow::DeviceSettings).map(|i| i + 1)
+    );
     assert_eq!(QuickRow::Network.label(), "Tools");
     assert_eq!(
         QuickRow::NETWORK,
@@ -681,7 +787,7 @@ fn no_wifi_hardware_hides_tools_and_wifi() {
     assert!(hidden.contains(&QuickRow::Wifi));
     assert!(!QuickRow::MAIN
         .iter()
-        .any(|r| *r != QuickRow::Network && hidden.contains(r)));
+        .any(|r| ![QuickRow::Network, QuickRow::DeviceSettings].contains(r) && hidden.contains(r)));
 }
 
 #[test]
@@ -869,6 +975,7 @@ fn fake_faces(a: &mut App) {
             (id(405), 75),
             (id(406), 95),
             (id(407), 90),
+            (id(408), 100),
         ],
         legend_light: [
             (id(400), 70),
@@ -879,6 +986,7 @@ fn fake_faces(a: &mut App) {
             (id(405), 75),
             (id(406), 95),
             (id(407), 90),
+            (id(408), 100),
         ],
         descriptions: [(id(410), 300, 44), (id(411), 340, 44)],
     });
@@ -1024,7 +1132,7 @@ fn the_legend_says_change_on_a_value_row_and_open_on_a_row_that_opens() {
     let (_d, mut a, _) = on_carousel();
     fake_faces(&mut a);
     a.apply(Action::QuickMenu);
-    for row in QuickRow::MAIN {
+    for row in QuickRow::MAIN[0].shown(&a.hidden_rows()) {
         assert_eq!(a.quick_menu(), Some(row));
         let out = frame(&a);
         assert!(drawn(&out, 400), "no B BACK on {row:?}");
@@ -1074,7 +1182,7 @@ fn the_pointer_stands_left_of_the_selected_row_and_only_it_is_lit() {
     let (_d, mut a, _) = on_carousel();
     fake_faces(&mut a);
     a.apply(Action::QuickMenu);
-    for row in QuickRow::MAIN {
+    for row in QuickRow::MAIN[0].shown(&a.hidden_rows()) {
         let out = frame(&a);
         let pointers: Vec<_> = out
             .iter()
@@ -1092,7 +1200,11 @@ fn the_pointer_stands_left_of_the_selected_row_and_only_it_is_lit() {
             ly + lh / 2.0,
             "{row:?}: the pointer is off the row"
         );
-        for other in QuickRow::MAIN.into_iter().filter(|r| *r != row) {
+        for other in QuickRow::MAIN[0]
+            .shown(&a.hidden_rows())
+            .into_iter()
+            .filter(|r| *r != row)
+        {
             assert!(drawn(&out, label(other, false)), "{other:?} is not grey");
             assert!(!drawn(&out, label(other, true)), "{other:?} is lit");
         }
@@ -1326,6 +1438,7 @@ fn no_row_in_hand_runs_its_value_into_its_label() {
             (id(405), 75),
             (id(406), 95),
             (id(407), 90),
+            (id(408), 100),
         ],
         legend_light: [
             (id(400), 70),
@@ -1336,6 +1449,7 @@ fn no_row_in_hand_runs_its_value_into_its_label() {
             (id(405), 75),
             (id(406), 95),
             (id(407), 90),
+            (id(408), 100),
         ],
         descriptions: [(id(410), 300, 44), (id(411), 340, 44)],
     });
@@ -1589,6 +1703,37 @@ fn a_frame_file_that_is_gone_reads_back_as_none() {
         ..SlotState::default()
     });
     assert_eq!(a.resolved_bezel(Platform::Gb), BezelPick::None);
+}
+
+#[test]
+fn stock_lid_power_off_is_unavailable_and_cannot_change_the_saved_timeout() {
+    let (d, mut a, _) = on_carousel_with(SlotState {
+        lid_off_min: Some(10),
+        ..Default::default()
+    });
+    a.set_stock_power_owned();
+    fake_faces(&mut a);
+    open_at(&mut a, QuickRow::LidOff);
+    assert_eq!(
+        a.quick_value(QuickRow::LidOff),
+        Some(QuickValue::Unavailable)
+    );
+    let out = frame(&a);
+    assert!(drawn(&out, 400), "B Back is missing");
+    assert!(
+        !drawn(&out, 401),
+        "unavailable timer still advertises Change"
+    );
+    for btn in [Btn::Left, Btn::Right, Btn::A] {
+        press(&mut a, btn);
+        a.flush_state();
+        assert_eq!(a.quick_menu(), Some(QuickRow::LidOff));
+        assert_eq!(a.lid_off_min(), 10);
+        assert_eq!(read_slot_state(d.path()).lid_off_min, Some(10));
+        assert!(!a.restarting() && !a.powering_off() && !a.relaunching());
+    }
+    press(&mut a, Btn::B);
+    assert_eq!(a.quick_menu(), Some(QuickRow::General));
 }
 
 #[test]

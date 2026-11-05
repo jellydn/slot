@@ -110,20 +110,20 @@ fn stock_critical_battery_checkpoints_and_exits_without_a_shutdown_screen() {
 }
 
 #[test]
-fn stock_about_restart_requests_a_device_reboot_not_a_return_to_stock() {
+fn stock_device_restart_requests_a_device_reboot_not_a_return_to_stock() {
     let d = tmp_root_with_carts(&["Emerald", "Fusion"]);
     let mut a = boot(d.path());
     a.set_power(panel(d.path(), Duration::from_secs(180)).0);
     a.set_stock_power_owned();
     a.apply(Action::QuickMenu);
-    for _ in 0..slot_ui::QuickRow::About.position(&a.hidden_rows()) {
+    for _ in 0..slot_ui::QuickRow::DeviceSettings.position(&a.hidden_rows()) {
         a.apply(Action::GbaDown(Btn::Down));
         a.apply(Action::GbaUp(Btn::Down));
     }
     a.apply(Action::GbaDown(Btn::A));
     a.apply(Action::GbaUp(Btn::A));
-    assert!(matches!(a.phase(), Phase::About), "{:?}", a.phase());
-    a.apply(Action::Restart);
+    assert_eq!(a.quick_menu(), Some(slot_ui::QuickRow::DeviceRestart));
+    a.apply(Action::GbaDown(Btn::A));
     assert!(a.restarting());
     assert!(!a.relaunching() && !a.powering_off());
     a.set_power(slot_power::Power::new(
@@ -131,11 +131,12 @@ fn stock_about_restart_requests_a_device_reboot_not_a_return_to_stock() {
             inner: slot_power::SimPlatform::at(d.path().into()),
             calls: Default::default(),
             fail: true,
+            resume_required: false,
         }),
         Duration::from_secs(180),
     ));
     assert!(!a.restart());
-    assert!(matches!(a.phase(), Phase::About));
+    assert_eq!(a.quick_menu(), Some(slot_ui::QuickRow::DeviceRestart));
     let faces: Vec<_> = slot_ui::Toast::all()
         .iter()
         .enumerate()
@@ -148,7 +149,7 @@ fn stock_about_restart_requests_a_device_reboot_not_a_return_to_stock() {
     assert!(
         draw.iter()
             .any(|d| matches!(d, Draw::Tex { tex, .. } if *tex == failed)),
-        "About must actually draw the reboot failure, not only record it"
+        "Device settings must draw the reboot failure, not only record it"
     );
 }
 
@@ -164,6 +165,7 @@ fn reboot_request_is_sent_once_and_failure_stays_in_slot_with_a_retry() {
                 inner: slot_power::SimPlatform::at(d.path().into()),
                 calls: calls.clone(),
                 fail,
+                resume_required: true,
             }),
             Duration::from_secs(180),
         ));
@@ -189,14 +191,120 @@ fn reboot_request_is_sent_once_and_failure_stays_in_slot_with_a_retry() {
     }
 }
 
+#[test]
+fn stock_device_shutdown_saves_requests_once_and_refusal_allows_retry() {
+    for fail in [false, true] {
+        let d = tmp_root_with_carts(&["Emerald", "Fusion"]);
+        let mut a = boot(d.path());
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        a.set_stock_power_owned();
+        a.set_power(slot_power::Power::new(
+            Box::new(Reboot {
+                inner: slot_power::SimPlatform::at(d.path().into()),
+                calls: calls.clone(),
+                fail,
+                resume_required: false,
+            }),
+            Duration::from_secs(180),
+        ));
+        a.apply(Action::QuickMenu);
+        for _ in 0..slot_ui::QuickRow::DeviceSettings.position(&a.hidden_rows()) {
+            a.apply(Action::GbaDown(Btn::Down));
+            a.apply(Action::GbaUp(Btn::Down));
+        }
+        a.apply(Action::GbaDown(Btn::A));
+        a.apply(Action::GbaUp(Btn::A));
+        a.apply(Action::GbaDown(Btn::Down));
+        a.apply(Action::GbaUp(Btn::Down));
+        assert_eq!(a.quick_menu(), Some(slot_ui::QuickRow::DeviceShutdown));
+        a.apply(Action::GbaDown(Btn::A));
+        assert!(a.powering_off());
+        assert!(!a.restarting() && !a.relaunching());
+        a.poweroff();
+        assert_eq!(calls.load(Ordering::Relaxed), 10);
+        if fail {
+            assert!(!a.powering_off());
+            assert_eq!(a.quick_menu(), Some(slot_ui::QuickRow::DeviceShutdown));
+            assert_eq!(a.toast(), Some(slot_ui::Toast::PoweroffFailed));
+            a.apply(Action::GbaDown(Btn::A));
+            a.poweroff();
+            assert_eq!(calls.load(Ordering::Relaxed), 20);
+        } else {
+            assert!(!a.ready_to_power_off());
+            a.tick_ms(a.now() + 60_000);
+            a.apply(Action::GbaDown(Btn::B));
+            a.apply(Action::GbaDown(Btn::A));
+            assert!(a.powering_off());
+            assert_eq!(a.quick_menu(), Some(slot_ui::QuickRow::DeviceShutdown));
+            assert!(!a.ready_to_power_off());
+            a.poweroff();
+            a.apply(Action::Restart);
+            assert_eq!(calls.load(Ordering::Relaxed), 10);
+            assert!(!a.restarting() && !a.relaunching());
+        }
+    }
+}
+
+#[test]
+fn stock_shutdown_flushes_the_playing_game_before_requesting_init() {
+    let d = tmp_root_with_carts(&["Emerald"]);
+    let mut a = app_playing_in(d.path(), "Emerald");
+    a.set_stock_power_owned();
+    a.set_power(slot_power::Power::new(
+        Box::new(Reboot {
+            inner: slot_power::SimPlatform::at(d.path().into()),
+            calls: Default::default(),
+            fail: true,
+            resume_required: true,
+        }),
+        Duration::from_secs(180),
+    ));
+    a.poweroff();
+    assert!(
+        StateRing::new(d.path(), Platform::Gba, Core::Mgba, "Emerald")
+            .read_resume()
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(a.toast(), Some(slot_ui::Toast::PoweroffFailed));
+}
+
 struct Reboot {
     inner: slot_power::SimPlatform,
     calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     fail: bool,
+    resume_required: bool,
 }
 
 impl slot_power::Platform for Reboot {
+    fn request_poweroff(&mut self) -> Result<(), String> {
+        if self.resume_required {
+            assert!(
+                StateRing::new(self.root(), Platform::Gba, Core::Mgba, "Emerald")
+                    .read_resume()
+                    .unwrap()
+                    .is_some(),
+                "save must be readable before init is called"
+            );
+        }
+        self.calls.fetch_add(10, Ordering::Relaxed);
+        if self.fail {
+            Err("mock poweroff refusal".into())
+        } else {
+            Ok(())
+        }
+    }
+
     fn request_restart(&mut self) -> Result<(), String> {
+        if self.resume_required {
+            assert!(
+                StateRing::new(self.root(), Platform::Gba, Core::Mgba, "Emerald")
+                    .read_resume()
+                    .unwrap()
+                    .is_some(),
+                "save must be readable before init is called"
+            );
+        }
         self.calls.fetch_add(1, Ordering::Relaxed);
         if self.fail {
             Err("mock init refusal".into())

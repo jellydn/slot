@@ -82,7 +82,7 @@ fn the_fast_forward_row_offers_off_a_slow_speed_and_the_four_ceilings() {
 fn the_rows_run_in_the_order_the_user_chose() {
     assert_eq!(
         QuickRow::MAIN.map(QuickRow::label),
-        ["General", "Screen", "Gameplay", "Controls", "Tools", "About"]
+        ["General", "Screen", "Gameplay", "Controls", "Tools", "Device", "About"]
     );
     assert_eq!(
         QuickRow::GENERAL.map(QuickRow::label),
@@ -202,7 +202,8 @@ fn the_rows_run_in_the_order_the_user_chose() {
             QuickRow::RommServer,
             QuickRow::RommPort,
             QuickRow::RommPair,
-            QuickRow::RommDisconnect
+            QuickRow::RommDisconnect,
+            QuickRow::DeviceSettings
         ]
     );
     for page in [
@@ -297,6 +298,7 @@ fn the_values_read_as_the_menu_prints_them() {
             "Ghosting",
             "HTTPS",
             "HTTP",
+            "Unavailable",
         ]
     );
     assert_eq!(QuickValue::flag(true), QuickValue::On);
@@ -640,7 +642,7 @@ fn server_sits_first_on_the_tools_page() {
     assert_eq!(QuickRow::NETWORK[0], QuickRow::Server);
     assert!(!QuickRow::MAIN.contains(&QuickRow::Server));
     assert_eq!(QuickRow::Server.parent(), Some(QuickRow::Network));
-    assert_eq!(QuickRow::MAIN.len(), 6);
+    assert_eq!(QuickRow::MAIN.len(), 7);
     assert_eq!(QuickRow::NETWORK.len(), 4);
     assert_eq!(QuickRow::Server.label(), "Gamebit");
     assert!(QuickRow::Server.opens());

@@ -77,8 +77,19 @@ impl Platform for StockPlatform {
         }
     }
 
-    // These legacy non-returning operations remain refused. Reboot uses the
-    // fallible request above; sleep/off/repair need their own verified contract.
+    fn request_poweroff(&mut self) -> Result<(), String> {
+        let status = Command::new("/sbin/poweroff")
+            .status()
+            .map_err(|_| "could not request poweroff from init".to_string())?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err("init poweroff request failed".into())
+        }
+    }
+
+    // Legacy non-returning operations remain refused. Normal init requests
+    // above do not force power changes or unload drivers.
     fn restart(&mut self) -> ! {
         eprintln!("slot: stock restart refused");
         std::process::exit(78)

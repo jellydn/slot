@@ -1,5 +1,6 @@
 //! User-requested connections through the existing stock supplicant only.
-//! Credentials/config/DHCP/radio stay stock-owned; no files or helpers are used.
+//! Stock retains supplicant/radio policy. Explicit connections may use one
+//! scoped DHCP owner; profile persistence waits for an associated valid lease.
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
@@ -25,6 +26,9 @@ pub struct Station<C: Control> {
     last_id: Option<u32>,
     error: Option<Failure>,
     persistence_safe: bool,
+    dhcp: Option<Box<dyn super::stock_dhcp::Client>>,
+    dhcp_profile: Option<(u32, String)>,
+    managed: bool,
 }
 
 impl<C: Control> Station<C> {
@@ -37,7 +41,23 @@ impl<C: Control> Station<C> {
             last_id: None,
             error: None,
             persistence_safe: true,
+            dhcp: None,
+            dhcp_profile: None,
+            managed: false,
         }
+    }
+
+    pub fn with_dhcp(control: C, client: Box<dyn super::stock_dhcp::Client>) -> Self {
+        let mut station = Self::new(control);
+        station.dhcp = Some(client);
+        station
+    }
+
+    fn stop_dhcp(&mut self) {
+        if let Some(client) = &mut self.dhcp {
+            client.stop();
+        }
+        self.dhcp_profile = None;
     }
 
     fn request(&mut self, command: &str, until: Instant) -> Result<String, Failure> {
@@ -130,6 +150,9 @@ impl<C: Control> Station<C> {
 }
 
 impl<C: Control> Backend for Station<C> {
+    fn keep_alive(&self) -> bool {
+        self.dhcp_profile.is_some() && self.pending.is_none() && self.last.ip.is_some()
+    }
     fn stock_owned(&self) -> bool {
         true
     }
@@ -145,6 +168,7 @@ impl<C: Control> Backend for Station<C> {
     }
     fn stop(&mut self) {
         self.cancel(Instant::now() + REQUEST_TIMEOUT);
+        self.stop_dhcp();
     }
     fn block(&mut self) {}
     fn scan(&mut self) -> Vec<Scanned> {
@@ -174,19 +198,39 @@ impl<C: Control> Backend for Station<C> {
                 // This filters unusable addresses, not stale leases. STATUS
                 // reports an address; it does not prove DHCP or Internet access.
                 self.last.ip = self.last.ip.take().filter(|value| {
-                    value.parse::<Ipv4Addr>().is_ok_and(|ip| {
-                        !ip.is_unspecified()
-                            && !ip.is_loopback()
-                            && !ip.is_link_local()
-                            && !ip.is_multicast()
-                            && !ip.is_broadcast()
-                    })
+                    self.last.state == State::Completed
+                        && value.parse::<Ipv4Addr>().is_ok_and(|ip| {
+                            !ip.is_unspecified()
+                                && !ip.is_loopback()
+                                && !ip.is_link_local()
+                                && !ip.is_multicast()
+                                && !ip.is_broadcast()
+                        })
                 });
             }
             _ => {
                 self.last = Status::default();
                 self.last_id = None;
                 self.error = Some(Failure::Other);
+            }
+        }
+        if self.managed {
+            self.last.ip = None;
+            if let Some((id, ssid)) = &self.dhcp_profile {
+                if self.last.state == State::Completed
+                    && self.last_id == Some(*id)
+                    && self.last.ssid.as_deref() == Some(ssid.as_str())
+                {
+                    match self.dhcp.as_mut().unwrap().poll(Instant::now()) {
+                        Ok(ip) => self.last.ip = ip,
+                        Err(error) => {
+                            self.error = Some(error);
+                            self.stop_dhcp();
+                        }
+                    }
+                } else if self.pending.is_none() {
+                    self.stop_dhcp();
+                }
             }
         }
         self.last.clone()
@@ -275,6 +319,7 @@ impl<C: Control> Backend for Station<C> {
     }
     fn connect(&mut self, id: u32) {
         self.error = None;
+        self.stop_dhcp();
         if !self.persistence_safe {
             self.error = Some(Failure::Other);
             return;
@@ -317,6 +362,9 @@ impl<C: Control> Backend for Station<C> {
         if !self.ok(&format!("SELECT_NETWORK {id}"), until) {
             self.error = Some(Failure::Other);
             self.cancel(Instant::now() + REQUEST_TIMEOUT);
+        } else if self.dhcp.is_some() {
+            self.managed = true;
+            self.dhcp_profile = self.pending.as_ref().map(|p| (p.id, p.ssid.clone()));
         }
     }
     fn finish_connect(&mut self) {
@@ -327,6 +375,9 @@ impl<C: Control> Backend for Station<C> {
             && self.last.ssid.as_deref() == Some(&pending.ssid)
             && self.last.state == State::Completed
             && self.last.ip.is_some();
+        if !connected {
+            self.stop_dhcp();
+        }
         let until = Instant::now() + REQUEST_TIMEOUT;
         if !self.restore(&pending, connected, until) {
             self.persistence_safe = false;
@@ -339,14 +390,23 @@ impl<C: Control> Backend for Station<C> {
     // Existing profiles and automatic network/radio/DHCP policy are not Slot's
     // property. In particular, worker duplicate cleanup must not remove them.
     fn forget(&mut self, _id: u32) {}
-    fn disconnect(&mut self) {}
+    fn disconnect(&mut self) {
+        self.error = None;
+        self.cancel(Instant::now() + REQUEST_TIMEOUT);
+        if !self.ok("DISCONNECT", Instant::now() + REQUEST_TIMEOUT) {
+            self.error = Some(Failure::DisconnectFailed);
+        } else {
+            self.stop_dhcp();
+        }
+    }
     fn set_auto_join(&mut self, _id: u32, _on: bool) {}
 }
 
 impl<C: Control> Drop for Station<C> {
     fn drop(&mut self) {
-        // Only an unfinished Slot attempt is rolled back. An established stock
-        // connection is not stopped when Slot exits.
+        // Roll back an unfinished profile and release only Slot's DHCP state.
+        // The stock supplicant/radio and external clients are left alone.
         self.cancel(Instant::now() + REQUEST_TIMEOUT);
+        self.stop_dhcp();
     }
 }

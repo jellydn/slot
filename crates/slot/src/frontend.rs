@@ -549,7 +549,12 @@ impl Frontend {
         session
             .app_mut()
             .set_wifi(crate::wifi::Wifi::spawn(Box::new(
-                crate::wifi::stock_station::Station::new(crate::wifi::stock::System::default()),
+                crate::wifi::stock_station::Station::with_dhcp(
+                    crate::wifi::stock::System::default(),
+                    Box::new(crate::wifi::stock_dhcp::Owner::new(
+                        crate::wifi::stock_dhcp::System::default(),
+                    )),
+                ),
             )));
         #[cfg(all(feature = "device", not(feature = "stock-tg5040")))]
         session
@@ -920,7 +925,7 @@ impl Frontend {
             .map(|v| v.map(&mut up))
             .collect();
         let descriptions = faces.descriptions.map(&mut up);
-        let mut pack_legend = |faces: [UndoFace; 8]| {
+        let mut pack_legend = |faces: [UndoFace; 9]| {
             faces.map(|f| {
                 let (tex, w, _) = up(f);
                 (tex, w)
@@ -1366,6 +1371,14 @@ impl Frontend {
     }
 
     pub fn poweroff(&mut self) {
+        if cfg!(feature = "stock-tg5040") {
+            self.stop();
+            self.session.app_mut().poweroff();
+            if self.session.app().shutting_down() {
+                self.session.close_audio();
+            }
+            return;
+        }
         self.session.close_audio();
         self.session.app_mut().poweroff();
     }
@@ -1408,8 +1421,8 @@ struct UiFaces {
     quick_labels: Vec<[UndoFace; 2]>,
     quick_pointer: UndoFace,
     quick_values: Vec<[UndoFace; 2]>,
-    quick_legend: [UndoFace; 8],
-    quick_legend_light: [UndoFace; 8],
+    quick_legend: [UndoFace; 9],
+    quick_legend_light: [UndoFace; 9],
     descriptions: [UndoFace; 2],
     sockets: Vec<CartFace>,
     chips: Vec<CartFace>,

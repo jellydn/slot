@@ -543,7 +543,7 @@ pub struct App {
     starting: Option<LinkStarting>,
     link_transport: Option<(u16, Box<dyn LinkChannel>)>,
     restarting: bool,
-    restart_requested: bool,
+    power_requested: bool,
     relaunching: bool,
     stock_power_owned: bool,
     repairing: bool,
@@ -980,7 +980,7 @@ impl App {
             starting: None,
             link_transport: None,
             restarting: false,
-            restart_requested: false,
+            power_requested: false,
             relaunching: false,
             stock_power_owned: false,
             repairing: false,
@@ -1670,6 +1670,7 @@ impl App {
                 WallpaperTint::Medium => QuickValue::Medium,
                 WallpaperTint::High => QuickValue::High,
             }),
+            QuickRow::LidOff if self.stock_power_owned => Some(QuickValue::Unavailable),
             QuickRow::LidOff => QuickValue::LID_OFF
                 .into_iter()
                 .find(|v| v.minutes() == Some(self.lid_off_min())),
@@ -1679,6 +1680,7 @@ impl App {
                 QuickValue::Dark
             }),
             QuickRow::WifiPower => Some(QuickValue::flag(!self.state.wifi_off)),
+            QuickRow::DeviceLeds => Some(QuickValue::Unavailable),
             QuickRow::RommProtocol => Some(match self.romm.protocol {
                 crate::romm::Protocol::Https => QuickValue::Https,
                 crate::romm::Protocol::Http => QuickValue::Http,
@@ -1699,6 +1701,9 @@ impl App {
             | QuickRow::CheckUpdates
             | QuickRow::Server
             | QuickRow::About
+            | QuickRow::DeviceSettings
+            | QuickRow::DeviceRestart
+            | QuickRow::DeviceShutdown
             | QuickRow::Screen
             | QuickRow::Game
             | QuickRow::Wallpaper
@@ -2087,6 +2092,9 @@ impl App {
             WallpaperPick::File(_) | WallpaperPick::Random | WallpaperPick::Shelf
         );
         let mut hidden = Vec::new();
+        if !self.stock_power_owned {
+            hidden.push(QuickRow::DeviceSettings);
+        }
         if !own {
             hidden.push(QuickRow::WallpaperTint);
         }
@@ -3202,7 +3210,10 @@ impl App {
     }
 
     pub fn ready_to_power_off(&self) -> bool {
-        self.powering_off && self.server.is_none() && self.now() >= self.act_at
+        self.powering_off
+            && !self.power_requested
+            && self.server.is_none()
+            && self.now() >= self.act_at
     }
 
     pub fn ready_to_repair(&self) -> bool {
@@ -3238,7 +3249,7 @@ impl App {
     }
 
     pub fn ready_to_restart(&self) -> bool {
-        self.restarting && !self.restart_requested && self.now() >= self.act_at
+        self.restarting && !self.power_requested && self.now() >= self.act_at
     }
 
     pub fn shutting_down(&self) -> bool {
@@ -3254,7 +3265,11 @@ impl App {
     }
 
     pub fn restart(&mut self) -> bool {
-        if self.restart_requested {
+        self.request_system_power(false)
+    }
+
+    fn request_system_power(&mut self, shutdown: bool) -> bool {
+        if self.power_requested {
             return true;
         }
         self.flush_resume();
@@ -3262,18 +3277,35 @@ impl App {
         let result = self
             .power
             .as_mut()
-            .ok_or_else(|| "no platform reboot handler".to_string())
-            .and_then(Power::request_restart);
+            .ok_or_else(|| "no platform power handler".to_string())
+            .and_then(|power| {
+                if shutdown {
+                    power.request_poweroff()
+                } else {
+                    power.request_restart()
+                }
+            });
         match result {
             Ok(()) => {
-                self.restart_requested = true;
-                eprintln!("slot: reboot requested from init; awaiting system shutdown");
+                self.power_requested = true;
+                eprintln!(
+                    "slot: {} requested from init; awaiting system shutdown",
+                    if shutdown { "poweroff" } else { "reboot" }
+                );
                 true
             }
             Err(error) => {
-                eprintln!("slot: reboot failed: {error}");
+                eprintln!("slot: system power request failed: {error}");
                 self.restarting = false;
-                self.hud.toast(Toast::RestartFailed, self.now());
+                self.powering_off = false;
+                self.hud.toast(
+                    if shutdown {
+                        Toast::PoweroffFailed
+                    } else {
+                        Toast::RestartFailed
+                    },
+                    self.now(),
+                );
                 false
             }
         }
@@ -3432,6 +3464,10 @@ impl App {
     }
 
     pub fn poweroff(&mut self) {
+        if self.stock_power_owned {
+            self.request_system_power(true);
+            return;
+        }
         self.settle_saves();
         if let Some(power) = &mut self.power {
             power.poweroff();
@@ -3439,6 +3475,11 @@ impl App {
     }
 
     pub fn apply(&mut self, action: Action) {
+        // Once queued, init owns the transition. Do not start another UI flow
+        // or change the requested operation while shutdown may be in progress.
+        if self.stock_power_owned && self.shutting_down() {
+            return;
+        }
         self.track_held_dir(action);
         if self.stock_power_owned {
             match action {
@@ -3641,7 +3682,10 @@ impl App {
                     row: QuickRow::About,
                 }
             }
-            Phase::About if action == Action::Restart || action == Action::GbaDown(Btn::X) => {
+            Phase::About
+                if !self.stock_power_owned
+                    && (action == Action::Restart || action == Action::GbaDown(Btn::X)) =>
+            {
                 self.begin_restart()
             }
             Phase::QuickMenu { row } => self.quick_menu_input(row, action),
@@ -3660,6 +3704,22 @@ impl App {
     }
 
     fn quick_menu_input(&mut self, row: QuickRow, action: Action) {
+        if self.stock_power_owned {
+            match (row, action) {
+                (QuickRow::DeviceRestart, Action::GbaDown(Btn::A)) => {
+                    return self.begin_restart();
+                }
+                (QuickRow::DeviceShutdown, Action::GbaDown(Btn::A)) => {
+                    if !self.shutting_down() {
+                        self.remember_shelf();
+                        self.powering_off = true;
+                        self.act_at = self.now() + SHUTDOWN_SHOW_MS;
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        }
         if row.binds() {
             match action {
                 Action::GbaDown(Btn::A) => return self.start_capture(row),
@@ -3818,6 +3878,7 @@ impl App {
             QuickRow::Screen
             | QuickRow::ScreenGeneral
             | QuickRow::Game
+            | QuickRow::DeviceSettings
             | QuickRow::ScreenGba
             | QuickRow::ScreenGbc
             | QuickRow::ScreenGb
@@ -3927,6 +3988,9 @@ impl App {
             | QuickRow::ScSunlightDown
             | QuickRow::ScReset
             | QuickRow::ScGuide
+            | QuickRow::DeviceRestart
+            | QuickRow::DeviceShutdown
+            | QuickRow::DeviceLeds
             | QuickRow::LidOff => {}
         }
     }
@@ -4044,6 +4108,9 @@ impl App {
             return;
         }
         if row == QuickRow::LidOff {
+            if self.stock_power_owned {
+                return;
+            }
             let n = LID_OFF_MIN.len();
             let at = LID_OFF_MIN
                 .iter()
@@ -4137,6 +4204,10 @@ impl App {
             | QuickRow::ShowTitles
             | QuickRow::DateTime
             | QuickRow::About
+            | QuickRow::DeviceSettings
+            | QuickRow::DeviceRestart
+            | QuickRow::DeviceShutdown
+            | QuickRow::DeviceLeds
             | QuickRow::Screen
             | QuickRow::Game
             | QuickRow::Resume
@@ -5650,6 +5721,10 @@ impl App {
             true => faces.legend_light,
             false => faces.legend,
         };
+        if self.stock_power_owned {
+            self.draw_side_legend(back, false, LINK_LEGEND_Y, out);
+            return;
+        }
         self.draw_side_legend(back, false, LINK_LEGEND_Y, out);
         self.draw_side_legend(restart, true, LINK_LEGEND_Y, out);
     }
@@ -5658,7 +5733,7 @@ impl App {
         let Some(faces) = &self.quick_menu_faces else {
             return;
         };
-        let [back, change, open, resume, _, set, clear, reset] = match self.light() {
+        let [back, change, open, resume, _, set, clear, reset, _] = match self.light() {
             true => faces.legend_light,
             false => faces.legend,
         };
@@ -5675,6 +5750,23 @@ impl App {
             false => back,
         };
         self.draw_side_legend(left, false, y, out);
+        if self.quick_value(row) == Some(QuickValue::Unavailable) {
+            return;
+        }
+        if row.page() == QuickRow::DEVICE {
+            let legends = if self.light() {
+                faces.legend_light
+            } else {
+                faces.legend
+            };
+            match row {
+                QuickRow::DeviceRestart | QuickRow::DeviceShutdown => {
+                    self.draw_side_legend(legends[8], true, y, out)
+                }
+                _ => {}
+            }
+            return;
+        }
         let right = if row.opens() { open } else { change };
         self.draw_side_legend(right, true, y, out);
     }
@@ -8451,7 +8543,7 @@ impl App {
     }
 
     pub fn restart_chord(&self) -> bool {
-        matches!(self.phase, Phase::About) && self.update.is_none()
+        matches!(self.phase, Phase::About) && !self.stock_power_owned && self.update.is_none()
     }
 
     pub fn update_offered(&self) -> bool {

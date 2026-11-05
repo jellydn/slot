@@ -70,6 +70,11 @@ pub trait Platform: Send {
         self.restart()
     }
 
+    /// Request a normal init-managed shutdown, retaining the UI on refusal.
+    fn request_poweroff(&mut self) -> Result<(), String> {
+        self.poweroff()
+    }
+
     fn set_clock_in_background(&mut self, secs: i64) {
         self.set_clock(secs);
     }
