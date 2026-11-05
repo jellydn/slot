@@ -215,6 +215,51 @@ pub fn chosen(card: &Path) -> Option<Logo> {
     Some(Logo::Wordmark(shipped))
 }
 
+/// Present the selected SD art through the current compositor, without installing it.
+pub fn draw_splash(card: &Path, compositor: &mut slot_gfx::Compositor, window: (u32, u32)) -> bool {
+    let Some(logo) = chosen(card) else {
+        return false;
+    };
+    let (Logo::Exact(bytes) | Logo::Wordmark(bytes)) = logo;
+    let Some(bmp) = decode(&bytes) else {
+        eprintln!("slot: selected startup logo is not an uncompressed 24-bit BMP; skipping splash");
+        return false;
+    };
+    let canvas = slot_gfx::Canvas::of(window);
+    let scale = (canvas.w / bmp.width as f32)
+        .min(canvas.h / bmp.height as f32)
+        .min(1.0);
+    let (w, h) = (bmp.width as f32 * scale, bmp.height as f32 * scale);
+    let ground = bmp.rgb[0].map(|c| c as f32 / 255.0);
+    let rgba: Vec<_> = bmp
+        .rgb
+        .iter()
+        .flat_map(|&[r, g, b]| [r, g, b, 255])
+        .collect();
+    let tex = compositor.create_texture_nearest(bmp.width as u32, bmp.height as u32, &rgba);
+    compositor.fit(window);
+    compositor.begin_frame();
+    compositor.draw_list(&[
+        slot_gfx::Draw::Rect {
+            x: 0.0,
+            y: 0.0,
+            w: canvas.w,
+            h: canvas.h,
+            colour: [ground[0], ground[1], ground[2], 1.0],
+        },
+        slot_gfx::Draw::Tex {
+            x: (canvas.w - w) / 2.0,
+            y: (canvas.h - h) / 2.0,
+            w,
+            h,
+            tex,
+            alpha: 1.0,
+        },
+    ]);
+    compositor.end_frame(window);
+    true
+}
+
 pub fn remember(card: &Path) {
     let user = card.join(USER_LOGO);
     let source = if user.is_file() {

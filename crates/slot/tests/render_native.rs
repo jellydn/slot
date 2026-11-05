@@ -929,3 +929,65 @@ fn a_suffixed_bezel_with_no_file_for_the_scale_draws_no_bezel() {
         assert_ne!(edge, [colour[0], colour[1], colour[2]]);
     }
 }
+
+#[test]
+fn startup_splash_uses_selected_card_art_without_installing_a_firmware_logo() {
+    use slot::bootlogo::{draw_splash, encode, Bmp, CARD_LOGO, USER_LOGO};
+
+    let surface = HeadlessSurface::new().expect("host splash surface");
+    let mut c = Compositor::new(&surface).expect("host splash compositor");
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("System")).unwrap();
+    std::fs::create_dir(root.path().join("Config")).unwrap();
+    let shipped = include_bytes!("../../../card/System/bootlogo.bmp");
+    std::fs::write(root.path().join(CARD_LOGO), shipped).unwrap();
+
+    assert!(draw_splash(root.path(), &mut c, (1280, 720)));
+    assert_eq!(c.frame_size(), (1280, 720));
+    let frame = c.read_frame();
+    write_png("tg5040-selected-slot-splash", 1280, 720, &frame);
+    let ground = &frame[..3];
+    let lit: Vec<_> = frame
+        .chunks_exact(4)
+        .enumerate()
+        .filter(|(_, p)| &p[..3] != ground)
+        .map(|(i, _)| (i % 1280, i / 1280))
+        .collect();
+    assert!(lit.len() > 1000, "the selected wordmark was not drawn");
+    assert!(lit
+        .iter()
+        .all(|&(x, y)| (490..790).contains(&x) && (300..420).contains(&y)));
+
+    let bg = [11, 21, 31];
+    let mut rgb = vec![bg; 8 * 6];
+    rgb[8 + 2] = [211, 31, 81];
+    rgb[4 * 8 + 5] = [17, 223, 43];
+    let user = encode(&Bmp {
+        width: 8,
+        height: 6,
+        rgb,
+    });
+    std::fs::write(root.path().join(USER_LOGO), &user).unwrap();
+    assert!(draw_splash(root.path(), &mut c, (720, 480)));
+    let frame = c.read_frame();
+    let at = |x: usize, y: usize| -> &[u8] { &frame[(y * 720 + x) * 4..(y * 720 + x) * 4 + 3] };
+    assert_eq!(at(0, 0), bg);
+    assert_eq!(at(358, 238), [211, 31, 81]);
+    assert_eq!(at(361, 241), [17, 223, 43]);
+    assert_eq!(std::fs::read(root.path().join(CARD_LOGO)).unwrap(), shipped);
+    assert_eq!(std::fs::read(root.path().join(USER_LOGO)).unwrap(), user);
+    assert!(!root.path().join("Cache/bootlogo.installed").exists());
+
+    std::fs::write(root.path().join(USER_LOGO), b"invalid selected bitmap").unwrap();
+    assert!(!draw_splash(root.path(), &mut c, (720, 480)));
+    assert_eq!(
+        c.read_frame(),
+        frame,
+        "invalid selection must not replace the current frame"
+    );
+    assert!(!draw_splash(
+        tempfile::tempdir().unwrap().path(),
+        &mut c,
+        (720, 480)
+    ));
+}

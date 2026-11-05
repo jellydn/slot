@@ -124,6 +124,14 @@ pub fn run() {
             return;
         }
     }
+    #[cfg(feature = "stock-tg5040")]
+    if slot::bootlogo::draw_splash(&root, &mut compositor, window) {
+        if let Err(e) = surface.swap() {
+            eprintln!("slot: startup splash: {e}");
+            return;
+        }
+        slot::boot_time::mark("SD startup splash");
+    }
     #[cfg(not(feature = "stock-tg5040"))]
     let platform = DevicePlatform::new(root.clone());
     #[cfg(feature = "stock-tg5040")]

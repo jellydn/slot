@@ -1,6 +1,41 @@
 # Stock Tina TG5040 candidate
 
-## Native TG5040 direction — reboot passed, Wi-Fi first
+## Native TG5040 direction — owner-reported Wi-Fi, Tools and reboot pass
+
+The owner reports that Wi-Fi is working and Tools are usable from Slot. Stop
+speculative Wi-Fi changes. This does not establish a new association test,
+credential persistence or Internet access. Keep the working backend unchanged.
+
+### Selected SD startup logo (host candidate; hardware test pending)
+
+Stock startup deliberately refuses the internal boot-logo installer. It also
+did not draw Slot's selected image. The SD renderer now draws that selection
+once through its existing EGL compositor, after rotation setup and before
+frontend loading: `Slot/Config/bootlogo.bmp` takes precedence over
+`Slot/System/bootlogo.bmp`. Use an uncompressed 24-bit BMP; an invalid override
+is skipped, not silently replaced. Art is centered, aspect-fitted down if
+needed, without forced enlargement or an added boot delay.
+
+The update must supply the existing default `card/System/bootlogo.bmp` if the
+card lacks it, and must preserve a user override. The last deployed receipt
+recorded both selection files absent; this is not a fresh card inspection.
+No dispatcher, input, firmware, LED, network or power behavior changes.
+
+This is a later application splash, not a replacement for an early firmware
+frame. Spruce's SmartPro installer at revision
+`6861c2b56ef23013dfdb7c87a00959825a8f68d4` writes internal
+`/dev/mmcblk0p1`'s `bootlogo.bmp`. That explains a possible early Spruce source,
+but this device's internal image has not been inspected. No internal writes
+are included or authorized. An early Spruce frame can remain before Slot.
+
+Frozen deployed baseline ZIP SHA256:
+`b452d2891466e25f3e5140b1e669cd1e915e84b763e923b4f82618242ce066bc`.
+Its Slot binary SHA256:
+`d0ba0b1cc1e87d4421763204613781454ecc021600bddca79034f0eab1c5c5e6`.
+Keep that archive immutable. Test the new logo candidate on hardware before
+publishing a release that includes it. First-release format remains a FAT32
+copy-to-card content package, not a raw OS image. Exclude ROMs, BIOS, personal
+saves/configuration, credentials and Grout runtime.
 
 Slot is the primary frontend and must provide its own settings and controls.
 Retain the stock Tina kernel, drivers and FAT32 content package. A stock menu
@@ -21,7 +56,7 @@ action or live service/configuration change is authorized by this host work.
    The owner confirms About Restart works on hardware. This does not establish
    power-loss save durability, physical Power behavior or sleep/wake support.
    Physical Power/sleep guards stay intact; do not repeat a reboot test.
-2. **Wi-Fi without MainUI (not implemented):** keep the existing bounded
+2. **Wi-Fi ownership research (deferred after owner success):** keep the existing bounded
    supplicant association/profile code and credential handling. Establish a
    single DHCP/radio backend owner before enabling native connection/toggle
    controls. Verify whether an existing wlan0 lease client is owned by stock;
