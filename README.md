@@ -1,20 +1,22 @@
 # Slot for TrimUI Smart Pro
 
-**Experimental native frontend for TG5040 on internal stock Tina Linux.** [jellydn/slot-tsp](https://github.com/jellydn/slot-tsp) is an independent [Slot](https://github.com/BrandonKowalski/slot) fork. Other TrimUI models are unverified.
+**Native frontend for TG5040 on internal stock Tina Linux.** [jellydn/slot-tsp](https://github.com/jellydn/slot-tsp) is an independent [Slot](https://github.com/BrandonKowalski/slot) fork. Other TrimUI models are unverified.
 
 Install stock packages by **copying content to an existing FAT32 card**, not flashing an OS image. Stock kernel, drivers and services stay in place.
 
 ## Verified status — 5 November 2026
 
-Committed native baseline: [796750a](https://github.com/jellydn/slot-tsp/commit/796750a), plus SD splash fix [8581da0](https://github.com/jellydn/slot-tsp/commit/8581da0). **No stock-Tina release is published**; the available release is [Knulli-only](#knulli-port).
+First stable stock package: **[stock-tsp-0.1.0](https://github.com/jellydn/slot-tsp/releases/tag/stock-tsp-0.1.0)** for stock firmware **1.1.1, UI 20251128, kernel 4.9.191**. Download `slot-tsp-stock-0.1.0-fat32.zip` and `SHA256SUMS`. Read the [release notes](knulli/RELEASE-STOCK-0.1.0.md) before installing. “Stable” identifies this release channel, not acceptance of every device function.
 
 | Evidence level | Status |
 | --- | --- |
-| Owner-confirmed | Direct boot, corrected A/B, scan, earlier Wi-Fi/Tools states, real Restart/Shutdown and selected SD splash. Not a pass for every function, game or core. |
+| Owner-confirmed | Direct boot, corrected A/B, scan, Tools, real Restart/Shutdown and selected SD splash. Latest first-connect correction: owner reports “Wifi good now.” Not a pass for every function, game or core. |
 | Host-checked baseline | Mount/write boundaries, input/panel mapping, EGL cleanup, dispatcher/fallback and native power paths. Not proof of hardware gameplay, save durability or suspend/resume. |
-| Reconnect broken | Supplicant reached `COMPLETED`, but no IPv4, default route or DHCP process followed. Internet access and profile persistence are unverified. |
-| Ongoing, not shipped | [Native DHCP, Device settings → Device, A-select power actions and Lid Power Off: Unavailable](https://ampcode.com/threads/T-01a1a72d-2b69-7096-b538-4ead69cd2f6e): uncommitted, host-checked and copied to the owner's card; hardware pass pending. Not in this baseline/release. |
+| Included controls | **Device → Restart / Shutdown: select a row, A activates, B returns.** X/Y do not activate power actions. Save/flush/settle and visible failure handling remain in place. Real power actions passed on the earlier build; the current A-select mapping is host-tested, not a separate new hardware pass. |
+| Wi-Fi scope | Explicit Connect owns one bounded wlan0 DHCP client after association; Disconnect preserves profiles. Competing clients/unmanaged state fail closed with Network In Use. No Internet, repeated cold-boot/reconnect reliability or persistence claim. |
 | Unresolved | Physical LED-off, Fn and real sleep/wake (white/gray failure). Early internal artwork/LED flash can remain before the SD splash. |
+
+LED controls and stock **Lid Power Off** show **Unavailable**. Slot Fn actions are disabled; physical lights and stock Fn policy are not changed. The TG5040 has no lid; no inactivity timer is added.
 
 Grout is not desired or required; historical proposals are not install advice, and removal of an existing installation is unconfirmed.
 
@@ -22,11 +24,13 @@ Details: [stock notes](knulli/STOCK-TG5040.md) and [frontend design](knulli/stoc
 
 ## Stock install and card layout
 
-Use only a reviewed, matched stock package; the owner-tested delivery is separate from releases. **Do not use the Knulli ZIP or a BaseOS/unslot image for stock installation.**
+Use the stock FAT32 ZIP above. It retains the exact owner-tested executable, cores and startup adapters; release packaging/documentation and source integration are disclosed separately. **Do not use the Knulli ZIP or a BaseOS/unslot image for stock installation.** No firmware, internal boot-logo writer, ROM, BIOS, personal settings/logs or Grout runtime is bundled.
 
 1. Power off normally. Back up the intended FAT32 card; no format is needed.
-2. Verify package manifests, checksums and Tina requirements. Copy reviewed content to the card root. Preserve games, BIOS, saves, states, settings and splash; review exact changes before replacing an existing `trimui` or updater tree.
-3. Safely eject. On-device, the card is `/mnt/SDCARD`. Launch **Slot Stock Test** from Apps, or use the package's complete matched `trimui` direct-boot adapters. The early `System/starts/slot.sh` hook alone is insufficient.
+2. Verify `SHA256SUMS`, extract the ZIP on the host, then copy its `Slot`, `Apps`, `System` and `trimui` directories to the card root. Do not copy an enclosing ZIP-name folder. Preserve games, BIOS, saves, states, settings and splash. Back up and review an existing `trimui` tree; stop if an SD updater or a different frontend would conflict. Do not merge unknown startup scripts blindly.
+3. Safely eject. On-device, the card is `/mnt/SDCARD`. The complete matched `trimui` adapters start Slot after stock services are ready. **Slot Stock Test** in Apps is an alternate entry. The early `System/starts/slot.sh` hook alone is insufficient.
+
+For Wi-Fi, open a saved network and select **Connect → A**. An associated network without an IP also offers Connect; no Disconnect/Power recovery should be needed first. This explicitly selects the profile and starts one owned DHCP client with scoped wlan0 address/default-route and temporary DNS updates. Opening the page alone starts no DHCP. Expect Getting IP → Connected with IPv4. If Network In Use appears, stop rather than restarting stock clients. Disconnect uses A and retains the saved profile. B returns.
 
 | Card-relative path | Purpose |
 | --- | --- |
