@@ -111,6 +111,13 @@ fn parses_the_response_fixtures() {
 
 #[test]
 fn builds_requests() {
+    let pairing: serde_json::Value =
+        serde_json::from_str(&slot::romm::api::pair_body(&RommConf::default())).unwrap();
+    assert!(pairing["requested_scopes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|s| s == "platforms.read"));
     assert_eq!(
         content_path(7, "Game (USA).zip", &[1, 2]),
         "/api/roms/7/content/Game%20%28USA%29.zip?file_ids=1,2"

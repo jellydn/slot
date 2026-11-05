@@ -136,10 +136,11 @@ pub enum QuickRow {
     DeviceRestart,
     DeviceShutdown,
     DeviceLeds,
+    RommLibrary,
 }
 
 impl QuickRow {
-    pub const ALL: [QuickRow; 127] = [
+    pub const ALL: [QuickRow; 128] = [
         QuickRow::FastForward,
         QuickRow::FastForwardSound,
         QuickRow::Screen,
@@ -267,6 +268,7 @@ impl QuickRow {
         QuickRow::DeviceRestart,
         QuickRow::DeviceShutdown,
         QuickRow::DeviceLeds,
+        QuickRow::RommLibrary,
     ];
 
     pub const MAIN: [QuickRow; 7] = [
@@ -305,7 +307,7 @@ impl QuickRow {
         QuickRow::CheckUpdates,
     ];
 
-    pub const ROMM: [QuickRow; 8] = [
+    pub const ROMM: [QuickRow; 9] = [
         QuickRow::RommProtocol,
         QuickRow::RommServer,
         QuickRow::RommPort,
@@ -313,6 +315,7 @@ impl QuickRow {
         QuickRow::RommPair,
         QuickRow::RommStatus,
         QuickRow::RommPairedServer,
+        QuickRow::RommLibrary,
         QuickRow::RommDisconnect,
     ];
 
@@ -324,9 +327,10 @@ impl QuickRow {
         QuickRow::RommPair,
     ];
 
-    pub const ROMM_PAIRED: [QuickRow; 3] = [
+    pub const ROMM_PAIRED: [QuickRow; 4] = [
         QuickRow::RommStatus,
         QuickRow::RommPairedServer,
+        QuickRow::RommLibrary,
         QuickRow::RommDisconnect,
     ];
 
@@ -530,6 +534,7 @@ impl QuickRow {
             | QuickRow::RommPair
             | QuickRow::RommStatus
             | QuickRow::RommPairedServer
+            | QuickRow::RommLibrary
             | QuickRow::RommDisconnect => &QuickRow::ROMM,
             QuickRow::ControlsShelf | QuickRow::Shortcuts | QuickRow::ControlsInGame => {
                 &QuickRow::CONTROL_PAGES
@@ -703,6 +708,7 @@ impl QuickRow {
             QuickRow::RommPair => "Pair",
             QuickRow::RommStatus => "Status",
             QuickRow::RommDisconnect => "Disconnect",
+            QuickRow::RommLibrary => "Library",
             QuickRow::Controls => "Controls",
             QuickRow::ControlsShelf => "Shelf",
             QuickRow::ControlsInGame => "In-Game",
@@ -805,6 +811,7 @@ impl QuickRow {
                 | QuickRow::RommServer
                 | QuickRow::RommPort
                 | QuickRow::RommPair
+                | QuickRow::RommLibrary
                 | QuickRow::RommDisconnect
         )
     }

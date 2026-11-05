@@ -707,4 +707,95 @@ mod romm_pages {
         shot(&px, size, "expired");
         assert!(decode(&px, size).is_none());
     }
+
+    #[test]
+    fn the_romm_library_states_render() {
+        use slot::romm::api::{Library, LibraryRom, RomInfo};
+        for panel in [(1280, 720), (640, 480)] {
+            let (_d, mut f, mut c, _s) = setup().expect("headless renderer");
+            join_home(&mut f);
+            f.app_mut().romm.server = "romm.home.local".into();
+            f.app_mut().romm.device_id = Some("d1".into());
+            f.app_mut().romm.token = Some("t1".into());
+            let script = Script::default();
+            f.set_romm_jobs(Box::new(script.clone()));
+            open_row(&mut f, QuickRow::RommLibrary);
+            fit(&mut f, &mut c, panel);
+            let (px, size) = seen(&mut f, &mut c);
+            shot(&px, size, "paired-library");
+            press(&mut f, Btn::A);
+            let request = match script.asked.lock().unwrap().last().unwrap() {
+                RommJob::Library { request, .. } => *request,
+                job => panic!("{job:?}"),
+            };
+            let (px, size) = seen(&mut f, &mut c);
+            shot(&px, size, "library-loading");
+            script.events.lock().unwrap().push(RommEvent::Library {
+                request,
+                result: Err(slot::romm::ApiError::Offline),
+            });
+            settle(&mut f);
+            let (px, size) = seen(&mut f, &mut c);
+            shot(&px, size, "library-error");
+            press(&mut f, Btn::A);
+            script.events.lock().unwrap().push(RommEvent::Library {
+                request: request + 1,
+                result: Ok(Library {
+                    items: [
+                        ("Pocket Adventure", "Pocket.gb"),
+                        ("Long Game Name - Special Edition (USA)", "Game.gb"),
+                        ("Seven Zip Archive", "Game.7z"),
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(id, (name, file))| LibraryRom {
+                        id: id as u64 + 10,
+                        name: name.into(),
+                        info: RomInfo {
+                            platform_slug: "gb".into(),
+                            fs_name: file.into(),
+                            files: vec![],
+                        },
+                    })
+                    .collect(),
+                    more: true,
+                }),
+            });
+            settle(&mut f);
+            assert_eq!(
+                f.app().network_screen().unwrap().lines[1].label,
+                "Pocket Adventure"
+            );
+            let (px, size) = seen(&mut f, &mut c);
+            shot(&px, size, "library-list");
+            assert!(px.chunks_exact(4).any(|p| p[0] > 0xe0));
+            press(&mut f, Btn::A);
+            let (px, size) = seen(&mut f, &mut c);
+            shot(&px, size, "library-downloading");
+            script.events.lock().unwrap().push(RommEvent::Download {
+                request: request + 2,
+                result: Ok(slot::romm::install::Finished {
+                    outcome: slot::romm::Outcome::Done,
+                    stem: Some("Pocket".into()),
+                    platform: Some(slot_store::Platform::Gb),
+                }),
+            });
+            settle(&mut f);
+            let (px, size) = seen(&mut f, &mut c);
+            shot(&px, size, "library-installed");
+            press(&mut f, Btn::Down);
+            press(&mut f, Btn::Down);
+            press(&mut f, Btn::A);
+            let (px, size) = seen(&mut f, &mut c);
+            shot(&px, size, "library-unsupported");
+            press(&mut f, Btn::Right);
+            script.events.lock().unwrap().push(RommEvent::Library {
+                request: request + 3,
+                result: Ok(Library::default()),
+            });
+            settle(&mut f);
+            let (px, size) = seen(&mut f, &mut c);
+            shot(&px, size, "library-empty");
+        }
+    }
 }

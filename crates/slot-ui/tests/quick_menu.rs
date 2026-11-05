@@ -203,7 +203,8 @@ fn the_rows_run_in_the_order_the_user_chose() {
             QuickRow::RommPort,
             QuickRow::RommPair,
             QuickRow::RommDisconnect,
-            QuickRow::DeviceSettings
+            QuickRow::DeviceSettings,
+            QuickRow::RommLibrary
         ]
     );
     for page in [

@@ -8,7 +8,7 @@ license.workspace = true
 [features]
 default = ["host"]
 host = ["dep:winit", "dep:cpal", "dep:gilrs", "slot-gfx/host"]
-device = ["slot-gfx/device"]
+device = ["slot-gfx/device", "romm"]
 stock-tg5040 = ["device", "slot-gfx/stock-tg5040"]
 tina-sd = ["stock-tg5040"]
 romm = []

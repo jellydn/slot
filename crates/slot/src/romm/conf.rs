@@ -77,6 +77,23 @@ impl RommConf {
         }
     }
 
+    pub fn remote_server(&self) -> bool {
+        let host = self.host();
+        let host = if host.starts_with('[') {
+            host.split(']').next().unwrap_or("").trim_start_matches('[')
+        } else {
+            host.split(':').next().unwrap_or("")
+        };
+        let host = host.trim_end_matches('.').to_ascii_lowercase();
+        !host.is_empty()
+            && host != "localhost"
+            && !host.ends_with(".localhost")
+            && !host.chars().any(char::is_whitespace)
+            && host
+                .parse::<std::net::IpAddr>()
+                .map_or(true, |ip| !ip.is_loopback() && !ip.is_unspecified())
+    }
+
     pub fn paired(&self) -> bool {
         self.device_id.is_some() && self.token.is_some()
     }

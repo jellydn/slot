@@ -53,6 +53,38 @@ fn origin_keeps_a_port() {
 }
 
 #[test]
+fn handheld_pairing_requires_a_remote_address() {
+    for server in [
+        "localhost",
+        "LOCALHOST.:8080",
+        "http://127.0.0.2:8080/",
+        "[::1]",
+        "0.0.0.0",
+        "[::]",
+        "",
+    ] {
+        assert!(
+            !RommConf {
+                server: server.into(),
+                ..full()
+            }
+            .remote_server(),
+            "{server}"
+        );
+    }
+    for server in ["192.168.1.21", "nas.local", "romm.example.com", "[fd00::5]"] {
+        assert!(
+            RommConf {
+                server: server.into(),
+                ..full()
+            }
+            .remote_server(),
+            "{server}"
+        );
+    }
+}
+
+#[test]
 fn origin_strips_a_typed_scheme_slashes_and_path() {
     for typed in [
         "https://romm.example.com/",

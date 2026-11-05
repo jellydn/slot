@@ -625,3 +625,210 @@ fn a_note_shows_in_status_until_cleared() {
     pump(&mut a);
     assert_eq!(a.romm_texts()[3], "Paired");
 }
+
+#[test]
+fn library_download_over_http_arrives_on_the_shelf() {
+    use std::io::{BufRead, Read, Write};
+    use std::net::TcpListener;
+    use std::time::{Duration, Instant};
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let mut paths = Vec::new();
+        for _ in 0..5 {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut reader = std::io::BufReader::new(&mut socket);
+            let mut request = String::new();
+            reader.read_line(&mut request).unwrap();
+            let path = request.split_whitespace().nth(1).unwrap().to_string();
+            let mut length = 0;
+            let mut authorized = false;
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some(n) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    length = n.trim().parse::<usize>().unwrap();
+                }
+                if line.to_ascii_lowercase().starts_with("authorization:") {
+                    assert!(line.contains("Bearer t1"));
+                    authorized = true;
+                }
+            }
+            assert!(
+                authorized,
+                "library and download requests need the saved token"
+            );
+            reader.read_exact(&mut vec![0; length]).unwrap();
+            let rom = r#"{"id":42,"name":"Pocket Adventure","platform_slug":"gb","fs_name":"Container.zip","files":[{"id":91,"file_name":"Pocket.gb"}]}"#;
+            let bytes = if path == "/api/devices/d1" {
+                b"{}".to_vec()
+            } else if path == "/api/platforms" {
+                br#"[{"id":8,"slug":"nes"},{"id":13,"slug":"gb"}]"#.to_vec()
+            } else if path.starts_with("/api/roms?") {
+                assert_eq!(path, "/api/roms?platform_ids=13&limit=20&offset=0&order_by=name&order_dir=asc&with_files=true");
+                format!(r#"{{"items":[{rom}],"total":1,"limit":20,"offset":0}}"#).into_bytes()
+            } else if path == "/api/roms/42" {
+                rom.as_bytes().to_vec()
+            } else {
+                assert_eq!(path, "/api/roms/42/content/Pocket.gb?file_ids=91");
+                let mut bytes = vec![0u8; 0x150];
+                bytes[0x134..0x13a].copy_from_slice(b"POCKET");
+                bytes
+            };
+            paths.push(path);
+            write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                bytes.len()
+            )
+            .unwrap();
+            socket.write_all(&bytes).unwrap();
+        }
+        paths
+    });
+    let (d, mut a) = booted();
+    pair(&mut a);
+    a.romm.protocol = Protocol::Http;
+    a.romm.server = "127.0.0.1".into();
+    a.romm.port = Some(port);
+    let runner =
+        slot::romm::jobs::Runner::new(d.path().into(), Box::new(slot::romm::http_api), |_, _| {
+            false
+        });
+    a.set_romm_jobs(slot::romm::jobs::spawn(runner));
+    open_at(&mut a, QuickRow::RommLibrary);
+    press(&mut a, Btn::A);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !a
+        .network_screen()
+        .unwrap()
+        .lines
+        .iter()
+        .any(|l| l.label == "Pocket Adventure")
+    {
+        assert!(Instant::now() < deadline, "library timed out");
+        pump(&mut a);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(
+        a.network_screen().unwrap().lines[1].label,
+        "Pocket Adventure"
+    );
+    press(&mut a, Btn::A);
+    while !a
+        .network_screen()
+        .unwrap()
+        .lines
+        .iter()
+        .any(|l| l.label == "Installed")
+    {
+        assert!(
+            Instant::now() < deadline,
+            "download timed out: {:?}",
+            a.network_screen()
+        );
+        pump(&mut a);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(
+        std::fs::read(d.path().join("Games/GB/Pocket.gb"))
+            .unwrap()
+            .len(),
+        0x150
+    );
+    assert!(!d.path().join("Games/GB/Container.zip").exists());
+    press(&mut a, Btn::B);
+    pump(&mut a);
+    assert!(a
+        .carts()
+        .any(|c| c.platform == Platform::Gb && c.stem == "Pocket"));
+    assert!(
+        std::fs::read_dir(d.path().join(slot::romm::install::TEMP_DIR))
+            .unwrap()
+            .next()
+            .is_none()
+    );
+    assert_eq!(server.join().unwrap().len(), 5);
+}
+
+#[test]
+fn library_pages_platforms_and_stale_replies() {
+    use slot::romm::api::{Library, LibraryRom, RomInfo};
+    let (_d, mut a, script) = paired_on_the_shelf();
+    open_at(&mut a, QuickRow::RommLibrary);
+    press(&mut a, Btn::A);
+    let request = match script.asked.lock().unwrap().last().unwrap() {
+        RommJob::Library {
+            request,
+            slug,
+            offset,
+            ..
+        } => {
+            assert_eq!(slug, "gb");
+            assert_eq!(*offset, 0);
+            *request
+        }
+        job => panic!("{job:?}"),
+    };
+    let page = Library {
+        items: vec![LibraryRom {
+            id: 9,
+            name: "Archive".into(),
+            info: RomInfo {
+                platform_slug: "gb".into(),
+                fs_name: "Game.7z".into(),
+                files: vec![],
+            },
+        }],
+        more: true,
+    };
+    script.events.lock().unwrap().push(RommEvent::Library {
+        request,
+        result: Ok(page.clone()),
+    });
+    pump(&mut a);
+    let asked = script.asked.lock().unwrap().len();
+    press(&mut a, Btn::A);
+    assert_eq!(
+        script.asked.lock().unwrap().len(),
+        asked,
+        "7z must not download"
+    );
+    press(&mut a, Btn::Down);
+    press(&mut a, Btn::A);
+    assert!(matches!(
+        script.asked.lock().unwrap().last(),
+        Some(RommJob::Library { offset: 20, .. })
+    ));
+    let current = request + 1;
+    script.events.lock().unwrap().extend([
+        RommEvent::Library {
+            request: current,
+            result: Ok(Library::default()),
+        },
+        RommEvent::Library {
+            request,
+            result: Ok(page),
+        },
+    ]);
+    pump(&mut a);
+    assert!(!a
+        .network_screen()
+        .unwrap()
+        .lines
+        .iter()
+        .any(|l| l.label == "Archive"));
+    press(&mut a, Btn::Right);
+    assert!(
+        matches!(script.asked.lock().unwrap().last(), Some(RommJob::Library { slug, offset: 0, .. }) if slug == "gbc")
+    );
+    press(&mut a, Btn::B);
+    assert_eq!(a.quick_menu(), Some(QuickRow::RommLibrary));
+    assert_eq!(script.asked.lock().unwrap().last(), Some(&RommJob::Stop));
+}

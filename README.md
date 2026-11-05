@@ -66,6 +66,43 @@ These steps do not recover a running driver hang; a conflicting updater can bypa
 
 `Games/GBAV` is a GBA Video category, not another system. Core availability depends on the package; game/save/link compatibility is not fully hardware-verified.
 
+## Built-in RomM client
+
+Stock preview: **[stock-tsp-0.2.0-rc.1](https://github.com/jellydn/slot-tsp/releases/tag/stock-tsp-0.2.0-rc.1)**.
+Download `slot-tsp-stock-0.2.0-rc.1-fat32.zip` and verify `SHA256SUMS`.
+Read the [preview notes](knulli/RELEASE-STOCK-0.2.0-rc.1.md). This rebuilt
+executable is host-checked, not handheld-tested; 0.1.0 remains the stable release.
+
+Source builds include RomM in both `device` (Knulli) and `stock-tg5040`.
+For desktop testing, add `--features romm`. This is Slot code, not Grout or
+an app in `Apps/`. Existing release ZIPs do not gain this feature.
+
+1. Connect the handheld to Wi-Fi. Open **Network → RomM**.
+2. Set Protocol, Server and Port for your RomM server. Use its LAN address,
+   for example Server `192.168.1.21`, Protocol `HTTP`, Port `8080`.
+   `localhost` and loopback addresses refer to the handheld and are rejected
+   for pairing. A blank port uses the protocol's default, not 8080.
+3. Select **Pair** and approve the code on your phone. Slot saves the server
+   and pairing in `Config/romm.conf` below the Slot root. Keep that file private.
+   Approve both ROM and platform read access. If paired with an older build,
+   Disconnect and pair again to grant the new `platforms.read` permission.
+4. Open **Library**. Left/Right selects GB, GBC or GBA. Up/Down selects a
+   game; A downloads it. Each page has up to 20 games. Use Next page or
+   Previous page for more games; A on the heading reloads the page.
+5. B cancels a download or returns to the RomM menu. The shelf refreshes
+   when you leave the library. Downloads use `Games/GB`, `Games/GBC` or
+   `Games/GBA` below the same Slot root on either OS.
+
+Only individual ROMs and ZIPs with exactly one playable ROM are supported.
+ZIPs are unpacked before installation; neither ZIP nor 7z archives are left
+on the shelf. 7z and multi-file entries show **Unsupported**. Failed or
+cancelled downloads remove temporary files; an existing game is not replaced.
+Library errors allow retry. Remote receive polling pauses while the library
+is open. Box art, save sync and collections are not part of this client.
+
+These are source capabilities, not a hardware verification claim. Stock
+Wi-Fi must have a working IP connection before browsing.
+
 ## Planned systems — not supported yet
 
 [Issue #2](https://github.com/jellydn/slot-tsp/issues/2): PICO-8, Neo Geo, Mega Drive, arcade/FBNeo/MAME, PS1, N64, NDS and Dreamcast. The [implementation plan](knulli/ISSUE-2-PLAN.md) covers dependencies, ABI/GPU feasibility and acceptance gates. **None is supported yet.**

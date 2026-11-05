@@ -539,6 +539,40 @@ fn disconnect_mid_download_leaves_no_temp_and_no_report() {
 }
 
 #[test]
+fn library_download_cancels_without_a_remote_install_report() {
+    let d = card();
+    let api = fake();
+    api.0.lock().unwrap().hold = true;
+    let made = api.clone();
+    let mut jobs = spawn(Runner::new(
+        d.path().into(),
+        Box::new(move |_| Box::new(made.clone())),
+        no_label,
+    ));
+    jobs.ask(RommJob::Download {
+        conf: conf(),
+        install: req("library-8", 8),
+        request: 17,
+    });
+    until("library download never began", || {
+        api.0.lock().unwrap().held
+    });
+    jobs.ask(RommJob::Stop);
+    until("library cancellation never completed", || {
+        matches!(
+            jobs.take(),
+            Some(RommEvent::Download {
+                request: 17,
+                result: Err(slot::romm::install::Stopped::Cancelled)
+            })
+        )
+    });
+    assert_eq!(temps(d.path()), 0);
+    assert!(!d.path().join("Games/GB/Game8.gb").exists());
+    assert!(api.reports().is_empty());
+}
+
+#[test]
 fn no_label_still_installs() {
     let d = card();
     let api = fake();

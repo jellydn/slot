@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use slot_store::{scan, Cart, Platform};
 
-use super::api::{version_ok, Api, ApiError, Cancel, Install, Outcome, Pending, Poll};
+use super::api::{version_ok, Api, ApiError, Cancel, Install, Library, Outcome, Pending, Poll};
 use super::conf::RommConf;
 use super::install::{free_space, install, Finished, Stopped};
 use super::socket::{dial, Push, Source};
@@ -31,6 +31,17 @@ pub enum RommJob {
     Claim,
     Stop,
     Disconnect(RommConf),
+    Library {
+        conf: RommConf,
+        slug: String,
+        offset: u64,
+        request: u64,
+    },
+    Download {
+        conf: RommConf,
+        install: Install,
+        request: u64,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -61,6 +72,14 @@ pub enum RommEvent {
     Note(String),
     NoteCleared,
     Online(bool),
+    Library {
+        request: u64,
+        result: Result<Library, ApiError>,
+    },
+    Download {
+        request: u64,
+        result: Result<Finished, Stopped>,
+    },
 }
 
 pub trait RommJobs: Send {
@@ -462,6 +481,7 @@ enum Work {
     Job(RommJob),
     Ran(String, Result<Finished, Stopped>),
     Feed(u64, Feed),
+    Download(RommConf, Install, u64, Cancel),
 }
 
 enum Feed {
@@ -538,12 +558,30 @@ struct Queue {
     jobs: Sender<Work>,
     events: Receiver<RommEvent>,
     halt: Arc<AtomicBool>,
+    download: Cancel,
 }
 
 impl RommJobs for Queue {
     fn ask(&mut self, job: RommJob) {
         if matches!(job, RommJob::Stop | RommJob::Disconnect(_)) {
+            self.download.set();
             self.halt.store(true, Ordering::SeqCst);
+        }
+        if let RommJob::Download {
+            conf,
+            install,
+            request,
+        } = job
+        {
+            self.download.set();
+            self.download = Cancel::default();
+            let _ = self.jobs.send(Work::Download(
+                conf,
+                install,
+                request,
+                self.download.clone(),
+            ));
+            return;
         }
         let _ = self.jobs.send(Work::Job(job));
     }
@@ -572,7 +610,12 @@ pub fn spawn(mut runner: Runner) -> Box<dyn RommJobs> {
     let halt: Arc<AtomicBool> = Arc::default();
     runner.halt = halt.clone();
     std::thread::spawn(move || work(runner, back, rx, tx));
-    Box::new(Queue { jobs, events, halt })
+    Box::new(Queue {
+        jobs,
+        events,
+        halt,
+        download: Cancel::default(),
+    })
 }
 
 fn begin(task: Task, back: Sender<Work>, tx: Sender<RommEvent>) {
@@ -610,6 +653,44 @@ fn work(mut runner: Runner, back: Sender<Work>, rx: Receiver<Work>, tx: Sender<R
             let _ = tx.send(e);
         };
         match job {
+            Work::Job(RommJob::Library {
+                conf,
+                slug,
+                offset,
+                request,
+            }) => {
+                let api = (runner.make)(&conf);
+                let tx = tx.clone();
+                std::thread::spawn(move || {
+                    let result = api.library(&slug, offset);
+                    let _ = tx.send(RommEvent::Library { request, result });
+                });
+            }
+            Work::Download(conf, mut req, request, cancel) => {
+                let api = (runner.make)(&conf);
+                let root = runner.root.clone();
+                let tx = tx.clone();
+                req.id = format!("{}-{request}", req.id);
+                std::thread::spawn(move || {
+                    let result = install(&root, api.as_ref(), &req, &cancel, free_space);
+                    if let Ok(Finished {
+                        outcome: Outcome::Done,
+                        platform: Some(platform),
+                        stem: Some(stem),
+                    }) = &result
+                    {
+                        if let Ok(carts) = scan(&root) {
+                            let _ = tx.send(RommEvent::Installed {
+                                carts,
+                                platform: *platform,
+                                stem: stem.clone(),
+                            });
+                        }
+                    }
+                    let _ = tx.send(RommEvent::Download { request, result });
+                });
+            }
+            Work::Job(RommJob::Download { .. }) => unreachable!(),
             Work::Job(RommJob::Pair(conf)) => {
                 let mut wait = |d: Duration| listen(&rx, &mut later, d);
                 runner.pair(&conf, &mut wait, &mut emit);

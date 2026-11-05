@@ -339,6 +339,9 @@ pub enum Phase {
         row: usize,
     },
     RommPair,
+    RommLibrary {
+        row: usize,
+    },
     Unwrap {
         stem: String,
     },
@@ -378,6 +381,7 @@ pub struct NetLegends {
     pub retry: [(TexId, u32); 2],
     pub disconnect: [(TexId, u32); 2],
     pub forget: [(TexId, u32); 2],
+    pub download: [(TexId, u32); 2],
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -434,6 +438,7 @@ enum NetNotice {
     ServerFailed,
     NoNetwork,
     RommNoServer,
+    RommLocalServer,
     RommPort,
 }
 
@@ -659,6 +664,12 @@ pub struct App {
     romm_online: bool,
     pair_screen: PairScreen,
     pair_faces: Option<PairFaces>,
+    library: crate::romm::api::Library,
+    library_platform: usize,
+    library_offset: u64,
+    library_request: u64,
+    library_busy: bool,
+    library_status: String,
     fetch_art: Option<FetchArt>,
     wifi_held: bool,
     wifi_boot_blocked: bool,
@@ -844,6 +855,12 @@ impl App {
             unwrap_tex: None,
             romm_note: None,
             romm_online: false,
+            library: crate::romm::api::Library::default(),
+            library_platform: 0,
+            library_offset: 0,
+            library_request: 0,
+            library_busy: false,
+            library_status: String::new(),
             pair_screen: PairScreen::Starting,
             pair_faces: None,
             fetch_art: None,
@@ -1692,6 +1709,7 @@ impl App {
             | QuickRow::RommPair
             | QuickRow::RommStatus
             | QuickRow::RommPairedServer
+            | QuickRow::RommLibrary
             | QuickRow::RommDisconnect
             | QuickRow::DateTime
             | QuickRow::FetchArt
@@ -3693,6 +3711,7 @@ impl App {
             Phase::NetworkScan { .. } => self.network_scan_input(action),
             Phase::NetworkPage { .. } => self.network_page_input(action),
             Phase::RommPair => self.pair_input(action),
+            Phase::RommLibrary { .. } => self.library_input(action),
             _ => {}
         }
     }
@@ -3871,6 +3890,11 @@ impl App {
                 );
             }
             QuickRow::RommPair => self.pair_romm(),
+            QuickRow::RommLibrary => {
+                self.stop_romm();
+                self.library_offset = 0;
+                self.load_library();
+            }
             QuickRow::RommDisconnect => {
                 self.romm_jobs.ask(RommJob::Disconnect(self.romm.clone()));
             }
@@ -4296,6 +4320,7 @@ impl App {
             | QuickRow::RommPair
             | QuickRow::RommStatus
             | QuickRow::RommPairedServer
+            | QuickRow::RommLibrary
             | QuickRow::RommDisconnect
             | QuickRow::Server => return,
         }
@@ -5420,7 +5445,10 @@ impl App {
                 self.draw_menu_footer(out);
                 return self.hud.draw(self.canvas(), self.now(), out);
             }
-            Phase::Networks { .. } | Phase::NetworkScan { .. } | Phase::NetworkPage { .. } => {
+            Phase::Networks { .. }
+            | Phase::NetworkScan { .. }
+            | Phase::NetworkPage { .. }
+            | Phase::RommLibrary { .. } => {
                 self.draw_networks(out);
                 return self.hud.draw(self.canvas(), self.now(), out);
             }
@@ -6771,8 +6799,12 @@ impl App {
                 self.set_update(Some(UpdateState::Notice(NetNotice::NoNetwork)));
             }
         }
-        if matches!(self.phase, Phase::RommPair) && self.update.is_none() && !self.wifi_up() {
+        if matches!(self.phase, Phase::RommPair | Phase::RommLibrary { .. })
+            && self.update.is_none()
+            && !self.wifi_up()
+        {
             self.romm_jobs.ask(RommJob::CancelPair);
+            self.leave_library();
             self.phase = Phase::QuickMenu {
                 row: QuickRow::Network,
             };
@@ -6811,6 +6843,7 @@ impl App {
                 | Phase::NetworkScan { .. }
                 | Phase::NetworkPage { .. }
                 | Phase::RommPair
+                | Phase::RommLibrary { .. }
                 | Phase::Unwrap { .. }
         ) && self.seated_cart().is_none()
             && !self.link_active()
@@ -8904,9 +8937,100 @@ impl App {
         }
     }
 
+    fn load_library(&mut self) {
+        self.library_request += 1;
+        self.library = crate::romm::api::Library::default();
+        self.library_busy = true;
+        self.library_status = "Loading".into();
+        self.phase = Phase::RommLibrary { row: 0 };
+        self.romm_jobs.ask(RommJob::Library {
+            conf: self.romm.clone(),
+            slug: ["gb", "gbc", "gba"][self.library_platform].into(),
+            offset: self.library_offset,
+            request: self.library_request,
+        });
+    }
+
+    fn leave_library(&mut self) {
+        self.library_request += 1;
+        self.library_busy = false;
+        self.romm_jobs.ask(RommJob::Stop);
+        self.phase = Phase::QuickMenu {
+            row: QuickRow::RommLibrary,
+        };
+    }
+
+    fn library_input(&mut self, action: Action) {
+        if matches!(action, Action::GbaDown(Btn::B) | Action::QuickMenu) {
+            self.leave_library();
+            return;
+        }
+        if self.library_busy {
+            return;
+        }
+        let Phase::RommLibrary { row } = self.phase else {
+            return;
+        };
+        let n = self.library.items.len();
+        let rows = 1 + n + usize::from(self.library_offset > 0) + usize::from(self.library.more);
+        match action {
+            Action::GbaDown(Btn::Left | Btn::Right) => {
+                let step = if action == Action::GbaDown(Btn::Left) {
+                    2
+                } else {
+                    1
+                };
+                self.library_platform = (self.library_platform + step) % 3;
+                self.library_offset = 0;
+                self.load_library();
+            }
+            Action::GbaDown(Btn::Up) => {
+                self.library_status = "A: download".into();
+                self.phase = Phase::RommLibrary {
+                    row: (row + rows - 1) % rows,
+                }
+            }
+            Action::GbaDown(Btn::Down) => {
+                self.library_status = "A: download".into();
+                self.phase = Phase::RommLibrary {
+                    row: (row + 1) % rows,
+                }
+            }
+            Action::GbaDown(Btn::A) if row == 0 => self.load_library(),
+            Action::GbaDown(Btn::A) if row <= n => {
+                let rom = &self.library.items[row - 1];
+                if !rom.supported() {
+                    self.library_status = "Unsupported file or multi-file ROM".into();
+                    return;
+                }
+                self.library_request += 1;
+                self.library_busy = true;
+                self.library_status = "Downloading; B: cancel".into();
+                self.romm_jobs.ask(RommJob::Download {
+                    conf: self.romm.clone(),
+                    install: rom.install(),
+                    request: self.library_request,
+                });
+            }
+            Action::GbaDown(Btn::A) => {
+                if self.library_offset > 0 && row == n + 1 {
+                    self.library_offset = self.library_offset.saturating_sub(20);
+                } else {
+                    self.library_offset += 20;
+                }
+                self.load_library();
+            }
+            _ => {}
+        }
+    }
+
     fn pair_romm(&mut self) {
         if self.romm.server.trim().is_empty() {
             self.set_update(Some(UpdateState::Notice(NetNotice::RommNoServer)));
+            return;
+        }
+        if !self.romm.remote_server() {
+            self.set_update(Some(UpdateState::Notice(NetNotice::RommLocalServer)));
             return;
         }
         self.start_pairing();
@@ -8961,6 +9085,9 @@ impl App {
     }
 
     fn romm_tick(&mut self, now: Millis) {
+        if matches!(self.phase, Phase::RommLibrary { .. }) {
+            return;
+        }
         if !self.romm_quiet() {
             if self.romm_open {
                 self.stop_romm();
@@ -9097,6 +9224,9 @@ impl App {
     }
 
     fn romm_unpaired(&mut self) {
+        if matches!(self.phase, Phase::RommLibrary { .. }) {
+            self.leave_library();
+        }
         self.romm.unpair();
         self.romm_note = None;
         self.romm_online = false;
@@ -9114,6 +9244,46 @@ impl App {
     fn take_romm_events(&mut self) {
         while let Some(event) = self.romm_jobs.take() {
             match event {
+                RommEvent::Library { request, result }
+                    if request == self.library_request
+                        && matches!(self.phase, Phase::RommLibrary { .. }) =>
+                {
+                    self.library_busy = false;
+                    match result {
+                        Ok(page) => {
+                            self.library_status = if page.items.is_empty() {
+                                "No games"
+                            } else {
+                                "A: download"
+                            }
+                            .into();
+                            self.library = page;
+                            self.phase = Phase::RommLibrary {
+                                row: usize::from(!self.library.items.is_empty()),
+                            };
+                        }
+                        Err(
+                            crate::romm::ApiError::Unauthorized
+                            | crate::romm::ApiError::Client(403),
+                        ) => self.library_status = "Disconnect and pair again for access".into(),
+                        Err(_) => self.library_status = "Could not load; A: retry".into(),
+                    }
+                }
+                RommEvent::Download { request, result }
+                    if request == self.library_request
+                        && matches!(self.phase, Phase::RommLibrary { .. }) =>
+                {
+                    self.library_busy = false;
+                    self.library_status = match result {
+                        Ok(done) => match done.outcome {
+                            crate::romm::Outcome::Done => "Installed".into(),
+                            crate::romm::Outcome::AlreadyInstalled => "Already installed".into(),
+                            crate::romm::Outcome::Failed(reason) => reason,
+                        },
+                        Err(_) => "Download stopped; A: retry".into(),
+                    };
+                }
+                RommEvent::Library { .. } | RommEvent::Download { .. } => {}
                 RommEvent::Paired { token, device_id } => {
                     self.romm.token = Some(token);
                     self.romm.device_id = Some(device_id);
@@ -9402,6 +9572,41 @@ impl App {
         };
         let (snap, off) = (self.wifi(), self.wifi_is_off());
         match &self.phase {
+            Phase::RommLibrary { row } => {
+                let line = |label: String, value: Option<String>| crate::networks::Line {
+                    label,
+                    value,
+                    lock: false,
+                    bars: None,
+                };
+                let mut lines = vec![line(
+                    format!(
+                        "{} Library (Left/Right)",
+                        ["GB", "GBC", "GBA"][self.library_platform]
+                    ),
+                    None,
+                )];
+                lines.extend(self.library.items.iter().map(|rom| {
+                    line(
+                        rom.name.clone(),
+                        (!rom.supported()).then(|| "Unsupported".into()),
+                    )
+                }));
+                if self.library_offset > 0 {
+                    lines.push(line("Previous page".into(), None));
+                }
+                if self.library.more {
+                    lines.push(line("Next page".into(), None));
+                }
+                if self.library_status != "A: download" {
+                    lines.insert(row + 1, line(self.library_status.clone(), None));
+                }
+                Some(NetScreen {
+                    lines,
+                    selected: *row,
+                    message: None,
+                })
+            }
             Phase::Networks { pick } => {
                 let rows = list_rows(snap, off);
                 Some(NetScreen {
@@ -9456,6 +9661,15 @@ impl App {
             NetRow::Scan => "Scan",
         };
         match &self.phase {
+            Phase::RommLibrary { row } if !self.library_busy => {
+                if *row == 0 {
+                    Some("Retry")
+                } else if let Some(rom) = self.library.items.get(row - 1) {
+                    rom.supported().then_some("Download")
+                } else {
+                    Some("Open")
+                }
+            }
             Phase::Networks { pick } => {
                 let rows = list_rows(snap, off);
                 rows.get(selected(&rows, pick)).map(pick_action)
@@ -9569,6 +9783,8 @@ impl App {
             Some("Connect") => net.map(|n| n.connect[light as usize]),
             Some("Disconnect") => net.map(|n| n.disconnect[light as usize]),
             Some("Forget") => net.map(|n| n.forget[light as usize]),
+            Some("Download") => net.map(|n| n.download[light as usize]),
+            Some("Retry") => net.map(|n| n.retry[light as usize]),
             _ => None,
         };
         if let Some(right) = right {
@@ -9639,6 +9855,10 @@ impl App {
             UpdateState::Notice(NetNotice::RommNoServer) => (
                 "Enter a server first".into(),
                 "Set Server before pairing.".into(),
+            ),
+            UpdateState::Notice(NetNotice::RommLocalServer) => (
+                "Use the server's LAN address".into(),
+                "localhost is this handheld. RomM usually uses port 8080.".into(),
             ),
             UpdateState::Notice(NetNotice::ServerFailed) => {
                 ("Gamebit failed".into(), "Gamebit has stopped.".into())

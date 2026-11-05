@@ -9,7 +9,12 @@ use crate::update::CONNECT_TIMEOUT;
 
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
 const CHUNK: usize = 64 * 1024;
-const SCOPES: [&str; 3] = ["devices.read", "devices.write", "roms.read"];
+const SCOPES: [&str; 4] = [
+    "devices.read",
+    "devices.write",
+    "roms.read",
+    "platforms.read",
+];
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Pending {
@@ -47,6 +52,52 @@ pub struct RomInfo {
     pub platform_slug: String,
     pub fs_name: String,
     pub files: Vec<RomFile>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LibraryRom {
+    pub id: u64,
+    pub name: String,
+    pub info: RomInfo,
+}
+
+impl LibraryRom {
+    pub fn supported(&self) -> bool {
+        let Some(platform) = super::install::target_dir(&self.info.platform_slug) else {
+            return false;
+        };
+        if self.info.files.len() > 1 {
+            return false;
+        }
+        let name = self
+            .info
+            .files
+            .first()
+            .map_or(self.info.fs_name.as_str(), |f| &f.file_name);
+        platform.accepts(Path::new(name))
+            || Path::new(name)
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("zip"))
+    }
+
+    pub fn install(&self) -> Install {
+        Install {
+            id: format!("library-{}", self.id),
+            rom_id: self.id,
+            file_ids: self
+                .info
+                .files
+                .first()
+                .map(|f| vec![f.id])
+                .unwrap_or_default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Library {
+    pub items: Vec<LibraryRom>,
+    pub more: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -99,6 +150,9 @@ pub trait Api: Send {
     fn claim(&self) -> Result<Vec<Install>, ApiError>;
     fn device_exists(&self) -> Result<bool, ApiError>;
     fn rom(&self, id: u64) -> Result<RomInfo, ApiError>;
+    fn library(&self, _slug: &str, _offset: u64) -> Result<Library, ApiError> {
+        Err(ApiError::NotFound)
+    }
     fn download(
         &self,
         rom: u64,
@@ -412,6 +466,42 @@ fn text(mut reply: Reply) -> Result<String, ApiError> {
 impl Api for HttpApi {
     fn version(&self) -> Result<String, ApiError> {
         parse_version(&text(ok(self.get("/api/heartbeat")?)?)?)
+    }
+
+    fn library(&self, slug: &str, offset: u64) -> Result<Library, ApiError> {
+        if super::install::target_dir(slug).is_none() {
+            return Err(ApiError::Client(400));
+        }
+        let platforms: serde_json::Value =
+            serde_json::from_str(&text(ok(self.get("/api/platforms")?)?)?)
+                .map_err(|_| ApiError::Server(200))?;
+        let platforms = platforms.as_array().ok_or(ApiError::Server(200))?;
+        let Some(platform) = platforms.iter().find(|p| p["slug"].as_str() == Some(slug)) else {
+            return Ok(Library::default());
+        };
+        let id = platform["id"].as_u64().ok_or(ApiError::Server(200))?;
+        let path = format!("/api/roms?platform_ids={id}&limit=20&offset={offset}&order_by=name&order_dir=asc&with_files=true");
+        let page: serde_json::Value = serde_json::from_str(&text(ok(self.get(&path)?)?)?)
+            .map_err(|_| ApiError::Server(200))?;
+        let items = page["items"].as_array().ok_or(ApiError::Server(200))?;
+        let total = page["total"].as_u64().ok_or(ApiError::Server(200))?;
+        let items = items
+            .iter()
+            .map(|item| {
+                Ok(LibraryRom {
+                    id: item["id"].as_u64().ok_or(ApiError::Server(200))?,
+                    name: item["name"]
+                        .as_str()
+                        .ok_or(ApiError::Server(200))?
+                        .to_string(),
+                    info: parse_rom(&item.to_string())?,
+                })
+            })
+            .collect::<Result<Vec<_>, ApiError>>()?;
+        Ok(Library {
+            more: !items.is_empty() && offset + (items.len() as u64) < total,
+            items,
+        })
     }
 
     fn pair_start(&self, conf: &RommConf) -> Result<Pending, ApiError> {

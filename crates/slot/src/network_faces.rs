@@ -174,6 +174,7 @@ impl NetworkSync {
             connect: word("Connect"),
             disconnect: word("Disconnect"),
             forget: word("Forget"),
+            download: word("Download"),
         });
         let [no, yes] = prompt_legends(footer_ink(false), "Cancel", "Forget");
         self.forget = [menu_face("Forget"), no, yes].iter().map(&mut up).collect();
