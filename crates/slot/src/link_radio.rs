@@ -53,6 +53,9 @@ pub fn radio_jobs() -> Box<dyn RadioJobs> {
 #[cfg(feature = "device")]
 impl RadioJobs for RadioQueue {
     fn ask(&mut self, job: RadioJob) {
+        if cfg!(feature = "stock-tg5040") {
+            return;
+        }
         let _ = queue().send(job);
     }
 
@@ -111,6 +114,9 @@ fn run(sub: &str) -> bool {
 
 #[cfg(feature = "device")]
 pub fn up(role: LinkRole, cancel: &Cancel) -> Result<(), RadioFail> {
+    if cfg!(feature = "stock-tg5040") {
+        return Err(RadioFail::Radio("stock radio control is disabled".into()));
+    }
     let mut child = link(role.arg())
         .spawn()
         .map_err(|e| RadioFail::Radio(format!("link {} would not start: {e}", role.arg())))?;
@@ -137,6 +143,9 @@ pub fn up(role: LinkRole, cancel: &Cancel) -> Result<(), RadioFail> {
 
 #[cfg(feature = "device")]
 pub fn down() {
+    if cfg!(feature = "stock-tg5040") {
+        return;
+    }
     let _ = link("down").status();
 }
 

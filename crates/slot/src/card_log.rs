@@ -1,4 +1,3 @@
-use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
 use std::sync::Mutex;
@@ -78,9 +77,9 @@ pub fn append(log: &Path, entry: &str) -> std::io::Result<()> {
     if std::fs::metadata(log).is_ok_and(|m| m.len() > CARD_LOG_MAX) {
         let mut old = log.as_os_str().to_owned();
         old.push(".1");
-        std::fs::rename(log, old)?;
+        slot_store::fs::rename(log, old)?;
     }
-    let mut f = OpenOptions::new().create(true).append(true).open(log)?;
+    let mut f = slot_store::fs::append_file(log)?;
     f.write_all(entry.as_bytes())?;
     f.sync_all()
 }
@@ -92,7 +91,7 @@ pub fn copy_to_card(log: &Path, root: &Path) -> std::io::Result<bool> {
         Err(e) => return Err(e),
     };
     let dir = crate::root::logs_dir(root);
-    std::fs::create_dir_all(&dir)?;
+    slot_store::fs::create_dir_all(&dir)?;
     let dest = dir.join(CARD_LOG_NAME);
     if std::fs::read(&dest).is_ok_and(|old| old == bytes) {
         return Ok(false);

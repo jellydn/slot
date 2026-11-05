@@ -83,7 +83,7 @@ pub fn load_index(
             let Some(index) = std::str::from_utf8(&body).ok().and_then(ArtIndex::parse) else {
                 return from_cache(UpdateFail::Bad);
             };
-            let _ = std::fs::remove_file(&tag);
+            let _ = slot_store::fs::remove_file(&tag);
             let saved = make::write_replacing(&json, &body).is_ok();
             if let (true, Some(t)) = (saved, etag) {
                 let _ = make::write_replacing(&tag, t.as_bytes());
@@ -482,7 +482,7 @@ pub fn studio_save(root: &Path, cart: &Cart, ground: Option<[u8; 3]>, look: Opti
             let _ = make::relabel(root, cart, &png);
         }
     }
-    let _ = std::fs::remove_dir_all(dir);
+    let _ = slot_store::fs::remove_dir_all(dir);
 }
 
 fn studio_run(root: &Path, cart: &Cart) -> StudioArt {
@@ -494,7 +494,7 @@ fn studio_run(root: &Path, cart: &Cart) -> StudioArt {
     if update::clock_is_wrong(update::now_unix()) {
         return failed(UpdateFail::Clock);
     }
-    let _ = std::fs::remove_dir_all(root.join(make::STUDIO_CACHE));
+    let _ = slot_store::fs::remove_dir_all(root.join(make::STUDIO_CACHE));
     if let Err(e) = update::wait_online() {
         return failed(e);
     }

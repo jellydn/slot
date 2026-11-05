@@ -70,11 +70,15 @@ struct Core {
 impl Core {
     fn new(mut backend: Box<dyn Backend>, owner: u64) -> Core {
         let saved = backend.saved();
+        let scan_only = backend.scan_only();
+        let stock_owned = backend.stock_owned();
         Core {
             owner,
             intent: Intent::Auto,
             backend,
             snap: Snapshot {
+                scan_only,
+                stock_owned,
                 saved,
                 ..Snapshot::default()
             },
@@ -122,6 +126,19 @@ impl Core {
     }
 
     fn command(&mut self, cmd: Cmd, now: Instant) {
+        if self.snap.stock_owned
+            && matches!(
+                cmd,
+                Cmd::PowerOff | Cmd::Disconnect | Cmd::AutoJoin { .. } | Cmd::Forget(_)
+            )
+        {
+            return;
+        }
+        if self.snap.scan_only
+            && !matches!(cmd, Cmd::Hold | Cmd::Release | Cmd::Scan | Cmd::ClearScan)
+        {
+            return;
+        }
         match cmd {
             Cmd::Hold => {
                 self.snap.held = self.backend.start();
@@ -131,7 +148,7 @@ impl Core {
                 if self.snap.held {
                     self.snap.saved = self.backend.saved();
                     match &self.intent {
-                        Intent::Manual(ssid) => {
+                        Intent::Manual(ssid) if !self.snap.stock_owned => {
                             if let Some(id) = self
                                 .snap
                                 .saved
@@ -143,7 +160,7 @@ impl Core {
                             }
                         }
                         Intent::Disconnected => self.backend.disconnect(),
-                        Intent::Auto => {}
+                        Intent::Auto | Intent::Manual(_) => {}
                     }
                     self.snap.status = self.backend.status();
                     self.next_status = Some(now + self.status_gap());
@@ -155,21 +172,38 @@ impl Core {
             Cmd::Release => self.release(false),
             Cmd::PowerOff => self.release(true),
             Cmd::Scan => self.next_scan = Some(now),
-            Cmd::ClearScan => self.snap.scan = None,
+            Cmd::ClearScan => {
+                self.snap.scan = None;
+                self.snap.scan_error = None;
+            }
             Cmd::Join {
                 ssid,
                 password,
                 hidden,
             } => {
-                if let Some(id) = self.backend.add(&ssid, &password, hidden) {
-                    self.snap.failure = None;
-                    self.snap.saved = self.backend.saved();
-                    if !self.snap.held {
-                        self.snap.failure = Some((ssid.clone(), Failure::Other));
+                if self.snap.stock_owned && !self.snap.held {
+                    self.snap.failure = Some((ssid, Failure::Other));
+                } else {
+                    if self.snap.stock_owned {
+                        self.end_attempt();
                     }
-                    self.intent = Intent::Manual(ssid);
-                    self.connect(id, now);
-                    self.joining = Some(id);
+                    if let Some(id) = self.backend.add(&ssid, &password, hidden) {
+                        self.snap.failure = None;
+                        self.snap.saved = self.backend.saved();
+                        if !self.snap.held {
+                            self.snap.failure = Some((ssid.clone(), Failure::Other));
+                        }
+                        self.intent = Intent::Manual(ssid);
+                        self.connect(id, now);
+                        self.joining = Some(id);
+                    } else {
+                        self.snap.failure = Some((
+                            ssid,
+                            self.backend.connection_error().unwrap_or(Failure::Other),
+                        ));
+                        self.snap.attempt = None;
+                        self.joining = None;
+                    }
                 }
             }
             Cmd::Connect(id) => {
@@ -228,6 +262,7 @@ impl Core {
         }
         self.snap.held = false;
         self.snap.scan = None;
+        self.snap.scan_error = None;
         self.snap.attempt = None;
         self.snap.status = Status {
             state: State::Off,
@@ -254,6 +289,11 @@ impl Core {
         self.end_attempt();
         self.snap.failure = None;
         self.backend.connect(id);
+        if let Some(error) = self.backend.connection_error() {
+            self.snap.failure = Some((ssid.clone(), error));
+            self.snap.attempt = Some((ssid, Phase::Failed(error)));
+            return;
+        }
         let a = Attempt::new(id, &ssid, now);
         self.snap.attempt = Some((ssid, a.phase()));
         self.attempt = Some(a);
@@ -297,7 +337,10 @@ impl Core {
                     .scan
                     .as_ref()
                     .is_none_or(|v| v.iter().any(|n| n.ssid == a.ssid));
-                let phase = a.observe(&self.snap.status, temp, seen, now);
+                let phase = self.backend.connection_error().map_or_else(
+                    || a.observe(&self.snap.status, temp, seen, now),
+                    Phase::Failed,
+                );
                 self.snap.attempt = Some((a.ssid.clone(), phase));
                 if phase == Phase::Connected {
                     self.snap.failure = None;
@@ -309,9 +352,12 @@ impl Core {
                         self.intent = Intent::Auto;
                     }
                 }
-                if a.done() {
+                if a.done() || matches!(phase, Phase::Failed(_)) {
                     let (id, ssid) = (a.id, a.ssid.clone());
                     self.end_attempt();
+                    if let Some(error) = self.backend.connection_error() {
+                        self.snap.failure = Some((ssid.clone(), error));
+                    }
                     if self.joining.take() == Some(id) {
                         self.settle_join(id, &ssid, phase);
                     }
@@ -321,6 +367,7 @@ impl Core {
         }
         if self.scans && self.next_scan.is_some_and(|t| now >= t) {
             self.snap.scan = Some(self.backend.scan());
+            self.snap.scan_error = self.backend.scan_error();
             self.next_scan = Some(now + SCAN_EVERY);
         }
         self.publish();
@@ -382,6 +429,8 @@ pub struct Wifi {
 
 impl Wifi {
     pub fn spawn(backend: Box<dyn Backend>) -> Wifi {
+        let scan_only = backend.scan_only();
+        let stock_owned = backend.stock_owned();
         let (tx, worker_rx) = mpsc::channel::<Msg>();
         let (worker_tx, rx) = mpsc::channel();
         let owner = claim();
@@ -423,7 +472,11 @@ impl Wifi {
         });
         Wifi {
             mode: Mode::Thread { tx, rx },
-            snap: Snapshot::default(),
+            snap: Snapshot {
+                scan_only,
+                stock_owned,
+                ..Snapshot::default()
+            },
             busy: false,
             waiting: 0,
             posted: 0,
@@ -468,6 +521,7 @@ impl Wifi {
         };
         if cmd == Cmd::ClearScan {
             self.snap.scan = None;
+            self.snap.scan_error = None;
         }
         self.post(Msg::Cmd(cmd));
         if let (Some((id, on)), Mode::Thread { .. }) = (flip, &self.mode) {

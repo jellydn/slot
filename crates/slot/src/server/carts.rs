@@ -1,4 +1,4 @@
-use std::fs::{self, File};
+use slot_store::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -144,7 +144,7 @@ fn store(dest: &Path, bytes: &[u8]) -> io::Result<()> {
         fs::create_dir_all(dir)?;
     }
     let tmp = dest.with_extension("tmp");
-    let written = File::create(&tmp).and_then(|mut f| {
+    let written = fs::create_file(&tmp).and_then(|mut f| {
         f.write_all(bytes)?;
         f.sync_data()
     });

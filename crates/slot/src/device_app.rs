@@ -5,8 +5,10 @@ use slot::frontend::Frontend;
 use slot::input::DeviceInput;
 use slot::panel_turn::{panel_turn, PanelTurn};
 use slot_gfx::{Compositor, FbdevSurface, Surface};
+#[cfg(not(feature = "stock-tg5040"))]
 use slot_power::{trace_first_frame, DevicePlatform};
 
+#[cfg(not(feature = "stock-tg5040"))]
 const CARD: &str = "/mnt/sdcard";
 
 const MIN_FRAME: Duration = Duration::from_millis(12);
@@ -15,6 +17,7 @@ const STEP_TIMEOUT: Duration = Duration::from_millis(12);
 
 const MARGIN: Duration = Duration::from_micros(1500);
 
+#[cfg(not(feature = "stock-tg5040"))]
 const LOG_SYNC: Duration = Duration::from_secs(1);
 
 struct Pacer {
@@ -74,9 +77,12 @@ pub fn run() {
     let audio = std::thread::Builder::new()
         .name("slot-audio-open".into())
         .spawn(slot::audio::opened_sink);
+    #[cfg(not(feature = "stock-tg5040"))]
     let root = std::env::var_os("SLOT_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(CARD));
+    #[cfg(feature = "stock-tg5040")]
+    let root = PathBuf::from(slot::stock_tg5040::ROOT);
     let mut surface = match FbdevSurface::new() {
         Ok(s) => s,
         Err(e) => {
@@ -118,9 +124,15 @@ pub fn run() {
             return;
         }
     }
+    #[cfg(not(feature = "stock-tg5040"))]
     let platform = DevicePlatform::new(root.clone());
-    eprintln!("slot: {}", platform.report());
-    platform.trace_boot();
+    #[cfg(feature = "stock-tg5040")]
+    let platform = slot_power::StockPlatform::new(root.clone());
+    #[cfg(not(feature = "stock-tg5040"))]
+    {
+        eprintln!("slot: {}", platform.report());
+        platform.trace_boot();
+    }
     slot::boot_time::mark("platform");
     let sink = match audio.map(|h| h.join()) {
         Ok(Ok(sink)) => sink,
@@ -131,7 +143,9 @@ pub fn run() {
     slot::boot_time::mark("frontend");
     let target = slot::baseos::var("BASEOS_TARGET").unwrap_or_default();
     let target = target.trim();
-    let board = if target.is_empty() {
+    let board = if cfg!(feature = "stock-tg5040") {
+        slot::stock_tg5040::BOARD.to_string()
+    } else if target.is_empty() {
         slot::input::evdev::knulli_board().unwrap_or_default()
     } else {
         target.to_string()
@@ -147,9 +161,11 @@ pub fn run() {
     let _ = std::thread::Builder::new()
         .name("slot-bootlogo".into())
         .spawn(move || {
+            #[cfg(not(feature = "stock-tg5040"))]
             slot::bootlogo::refresh(&card);
             slot::root::sweep_temps(&card);
         });
+    #[cfg(not(feature = "stock-tg5040"))]
     let _ = std::thread::Builder::new()
         .name("slot-logsync".into())
         .spawn(sync_log_writes);
@@ -158,15 +174,31 @@ pub fn run() {
     let mut pacer = Pacer::new();
     let (mut frames, mut missed, mut early, mut stale) = (0u32, 0u32, 0u32, 0u32);
     loop {
+        if cfg!(feature = "stock-tg5040") && slot_store::fs::check_write(&root).is_err() {
+            // Do not attempt a final save to a removed or replaced mount.
+            eprintln!("slot: SD root identity changed; returning without further saves");
+            return;
+        }
         pacer.wait();
         let began = Instant::now();
         input.steer_with_stick(frontend.app().left_stick_dpad());
         frontend.advance(&mut input);
+        if cfg!(feature = "stock-tg5040") && (frontend.repairing() || frontend.powering_off()) {
+            eprintln!("slot: stock system action refused; saving and returning to supervisor");
+            frontend.relaunch();
+            return;
+        }
         if frontend.restarting() {
             frontend.restart();
         }
         if frontend.relaunching() {
+            if cfg!(feature = "stock-tg5040") {
+                eprintln!("slot: exiting to stock supervisor; closing audio and saving");
+            }
             frontend.relaunch();
+            if cfg!(feature = "stock-tg5040") {
+                eprintln!("slot: normal save/audio cleanup complete; releasing graphics on return");
+            }
             return;
         }
         if frontend.repairing() {
@@ -210,6 +242,7 @@ pub fn run() {
         if !drawn {
             drawn = true;
             slot::boot_time::mark("first frame");
+            #[cfg(not(feature = "stock-tg5040"))]
             trace_first_frame();
         }
         if let Some(left) = MIN_FRAME.checked_sub(began.elapsed()) {
@@ -218,6 +251,7 @@ pub fn run() {
     }
 }
 
+#[cfg(not(feature = "stock-tg5040"))]
 fn sync_log_writes() {
     let mut synced = 0;
     loop {

@@ -60,6 +60,9 @@ pub fn pad_map_from(board: &str) -> PadMap {
 }
 
 pub fn detect_pad_map() -> PadMap {
+    if cfg!(feature = "stock-tg5040") {
+        return PadMap::Tsp;
+    }
     for key in ["SLOT_BOARD", "BASEOS_TARGET"] {
         if let Some(board) = std::env::var(key).ok().map(|b| b.trim().to_string()) {
             if !board.is_empty() {
@@ -175,6 +178,13 @@ pub fn to_raw(ev: Ev) -> Option<RawEvent> {
 }
 
 pub fn code_to_btn(code: u16) -> Option<Btn> {
+    // Stock Tina reverses A/B relative to the Knulli TSP input mapping.
+    #[cfg(feature = "stock-tg5040")]
+    let code = match code {
+        0x130 => 0x131,
+        0x131 => 0x130,
+        other => other,
+    };
     code_to_btn_for(pad_map(), code)
 }
 

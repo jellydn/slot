@@ -543,18 +543,29 @@ impl Frontend {
             platform.root().to_path_buf(),
             crate::romm::http_api,
         ));
+        #[cfg(not(feature = "stock-tg5040"))]
         session.app_mut().set_wifi(wifi_worker(platform.root()));
-        #[cfg(feature = "device")]
+        #[cfg(feature = "stock-tg5040")]
+        session
+            .app_mut()
+            .set_wifi(crate::wifi::Wifi::spawn(Box::new(
+                crate::wifi::stock_station::Station::new(crate::wifi::stock::System::default()),
+            )));
+        #[cfg(all(feature = "device", not(feature = "stock-tg5040")))]
         session
             .app_mut()
             .set_wifi_probe(std::path::PathBuf::from("/sys/class/net/wlan0"));
-        session.app_mut().connect_wifi();
+        if !cfg!(feature = "stock-tg5040") {
+            session.app_mut().connect_wifi();
+        }
         session.app_mut().require_fetch_faces();
-        if let (Some(target), Some(version)) = (
-            crate::baseos::var("BASEOS_TARGET"),
-            crate::baseos::var("BASEOS_VERSION"),
-        ) {
-            crate::update::clean_baseos(platform.root(), &target, &version);
+        if !cfg!(feature = "stock-tg5040") {
+            if let (Some(target), Some(version)) = (
+                crate::baseos::var("BASEOS_TARGET"),
+                crate::baseos::var("BASEOS_VERSION"),
+            ) {
+                crate::update::clean_baseos(platform.root(), &target, &version);
+            }
         }
         crate::boot_time::mark("session");
         let stale_check =
@@ -562,6 +573,9 @@ impl Frontend {
         session
             .app_mut()
             .set_power(Power::new(platform, DOZE_TIMEOUT));
+        if cfg!(feature = "stock-tg5040") {
+            session.app_mut().set_stock_power_owned();
+        }
         Frontend {
             session,
             start: now,
@@ -1325,8 +1339,13 @@ impl Frontend {
     }
 
     pub fn restart(&mut self) {
-        self.session.close_audio();
-        self.session.app_mut().restart();
+        if !cfg!(feature = "stock-tg5040") {
+            self.session.close_audio();
+        }
+        self.stop();
+        if self.session.app_mut().restart() {
+            self.session.close_audio();
+        }
     }
 
     pub fn relaunching(&self) -> bool {
@@ -1359,7 +1378,7 @@ impl Frontend {
     }
 }
 
-#[cfg(feature = "device")]
+#[cfg(all(feature = "device", not(feature = "stock-tg5040")))]
 fn wifi_worker(root: &std::path::Path) -> crate::wifi::Wifi {
     crate::wifi::sp::device_wifi(root)
 }
@@ -2203,12 +2222,20 @@ fn sync_about(app: &mut App, compositor: &mut Compositor, state: &mut AboutFace)
     }
     state.battery = battery;
     let build = Build::current();
+    let (model, baseos) = if cfg!(feature = "stock-tg5040") {
+        ("TRIMUI SMART PRO".into(), None)
+    } else {
+        (
+            crate::baseos::var("BASEOS_MODEL").unwrap_or_default(),
+            crate::baseos::var("BASEOS_VERSION"),
+        )
+    };
     let face = sticker_face(&StickerFields {
         battery,
         serial: &build.serial(),
         version: build.version,
-        baseos: crate::baseos::var("BASEOS_VERSION").as_deref(),
-        model: &crate::baseos::var("BASEOS_MODEL").unwrap_or_default(),
+        baseos: baseos.as_deref(),
+        model: &model,
     });
     let id = upload(compositor, &mut state.tex, face);
     app.set_sticker_face(id);

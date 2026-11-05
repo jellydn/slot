@@ -423,3 +423,47 @@ fn the_mac_fake_joins_its_saved_network_when_held() {
     w.send(Cmd::Release);
     w.poll(secs(t, 4));
 }
+
+#[test]
+fn a_refused_join_reports_failure_instead_of_silently_ignoring_the_password() {
+    use slot::wifi::{Backend, Saved, Scanned, Status};
+    struct Refuses;
+    impl Backend for Refuses {
+        fn start(&mut self) -> bool {
+            true
+        }
+        fn stop(&mut self) {}
+        fn block(&mut self) {}
+        fn scan(&mut self) -> Vec<Scanned> {
+            Vec::new()
+        }
+        fn saved(&mut self) -> Vec<Saved> {
+            Vec::new()
+        }
+        fn status(&mut self) -> Status {
+            Status::default()
+        }
+        fn temp_disabled(&mut self, _: u32) -> bool {
+            false
+        }
+        fn add(&mut self, _: &str, _: &str, _: bool) -> Option<u32> {
+            None
+        }
+        fn connect(&mut self, _: u32) {}
+        fn finish_connect(&mut self) {}
+        fn disconnect(&mut self) {}
+        fn set_auto_join(&mut self, _: u32, _: bool) {}
+        fn forget(&mut self, _: u32) {}
+    }
+    let _g = serial();
+    let mut w = Wifi::inline(Box::new(Refuses));
+    let t = Instant::now();
+    w.send(Cmd::Hold);
+    w.send(join("Refused", "mock-passphrase"));
+    w.poll(t);
+    assert_eq!(
+        w.snapshot().failure,
+        Some(("Refused".into(), Failure::Other))
+    );
+    assert!(!w.busy());
+}

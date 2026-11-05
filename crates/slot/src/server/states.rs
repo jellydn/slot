@@ -1,4 +1,4 @@
-use std::fs;
+use slot_store::fs;
 use std::path::Path;
 
 use serde_json::{json, Value};

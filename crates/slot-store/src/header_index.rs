@@ -135,7 +135,7 @@ pub fn save(root: &Path) -> std::io::Result<()> {
     }
     let path = root.join(FILE);
     if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
+        let _ = crate::fs::create_dir_all(dir);
     }
     let result = crate::atomic_write(&path, out.as_bytes());
     if result.is_err() {

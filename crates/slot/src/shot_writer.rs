@@ -159,7 +159,7 @@ fn run(job: &Job, card_writes: &CardWrites) -> bool {
     match job {
         Job::Write(shot) => write(shot, card_writes),
         Job::Remove(path) => {
-            let removed = std::fs::remove_file(path);
+            let removed = slot_store::fs::remove_file(path);
             if let Err(e) = &removed {
                 eprintln!("slot: delete screenshot: {}: {e}", path.display());
             }
@@ -180,7 +180,7 @@ fn write(shot: &Shot, card_writes: &CardWrites) -> bool {
 
 fn store(path: &Path, png: &[u8]) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
+        slot_store::fs::create_dir_all(dir)?;
     }
     atomic_write(path, png)
 }

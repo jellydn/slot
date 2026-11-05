@@ -8,7 +8,9 @@ use slot_ui::{
 };
 
 use crate::app::{App, NetLegends, PairFaces, PairView};
-use crate::networks::{Line, SCANNING_MESSAGE, WIFI_OFF_MESSAGE};
+use crate::networks::{
+    Line, SCANNING_MESSAGE, STOCK_EMPTY_MESSAGE, STOCK_SCAN_MESSAGE, WIFI_OFF_MESSAGE,
+};
 
 #[derive(PartialEq)]
 struct KeyShape {
@@ -131,9 +133,18 @@ impl NetworkSync {
 
     fn load_statics(&mut self, app: &mut App, compositor: &mut Compositor) {
         let mut up = |f: &UndoFace| (compositor.create_texture(f.w, f.h, &f.rgba), f.w, f.h);
-        self.messages = [WIFI_OFF_MESSAGE, SCANNING_MESSAGE]
-            .map(|m| (m, up(&menu_detail_face(m))))
-            .to_vec();
+        self.messages = [
+            WIFI_OFF_MESSAGE,
+            SCANNING_MESSAGE,
+            STOCK_SCAN_MESSAGE,
+            STOCK_EMPTY_MESSAGE,
+            crate::networks::STOCK_CONNECT_MESSAGE,
+            crate::wifi::ScanError::Unavailable.label(),
+            crate::wifi::ScanError::Failed.label(),
+            crate::wifi::ScanError::TimedOut.label(),
+        ]
+        .map(|m| (m, up(&menu_detail_face(m))))
+        .to_vec();
         app.set_network_icons(NetIcons {
             bars: [0, 1, 2, 3].map(|n| [false, true].map(|l| up(&net_bars_face(n, l)))),
             lock: [false, true].map(|l| up(&net_lock_face(l))),

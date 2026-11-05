@@ -20,6 +20,215 @@ const FRAME_MS: Millis = 16;
 const DT: f32 = 1.0 / 60.0;
 
 #[test]
+fn stock_power_gestures_checkpoint_without_local_doze_or_shutdown() {
+    let d = tmp_root_with_carts(&["Emerald"]);
+    let mut a = app_playing_in(d.path(), "Emerald");
+    a.set_stock_power_owned();
+    a.apply(Action::PowerPress);
+    assert!(
+        StateRing::new(d.path(), Platform::Gba, Core::Mgba, "Emerald")
+            .read_resume()
+            .unwrap()
+            .is_some()
+    );
+    for action in [
+        Action::PowerTap,
+        Action::PowerPress,
+        Action::PowerHold,
+        Action::PowerHold,
+        Action::PowerOff,
+        Action::PowerTap,
+    ] {
+        a.apply(action);
+        a.tick_ms(a.now() + 2_000);
+        assert!(matches!(a.phase(), Phase::Playing { .. }));
+        assert!(!a.powering_off() && !a.restarting() && !a.relaunching());
+    }
+}
+
+#[test]
+fn stock_lid_pause_does_not_expire_into_system_poweroff() {
+    let d = tmp_root_with_carts(&["Emerald"]);
+    let mut a = app_playing_in(d.path(), "Emerald");
+    a.set_stock_power_owned();
+    a.set_power(panel(d.path(), Duration::from_secs(2)).0);
+    a.apply(Action::LidClose);
+    a.tick_ms(a.now() + 181_000);
+    a.on_doze_timeout();
+    assert!(matches!(a.phase(), Phase::Doze { .. }));
+    assert!(!a.powering_off() && !a.relaunching());
+    a.apply(Action::LidOpen);
+    assert!(matches!(a.phase(), Phase::Playing { .. }));
+}
+
+#[test]
+fn stock_missing_power_release_and_idle_do_not_request_exit() {
+    let d = tmp_root_with_carts(&["Emerald", "Fusion"]);
+    clocked(d.path());
+    let mut s = Session::boot(d.path().to_path_buf());
+    s.app_mut()
+        .set_power(panel(d.path(), Duration::from_secs(180)).0);
+    s.app_mut().set_stock_power_owned();
+    let mut now = 0;
+    hold_power(&mut s, &mut now);
+    now += 181_000;
+    s.feed([], now);
+    s.update(DT);
+    assert!(
+        matches!(s.app().phase(), Phase::Shelf),
+        "{:?}",
+        s.app().phase()
+    );
+    assert!(!s.app().powering_off() && !s.app().relaunching());
+    event(&mut s, RawEvent::Up(Btn::Power), &mut now);
+    assert!(matches!(s.app().phase(), Phase::Shelf));
+    assert!(!s.app().powering_off() && !s.app().relaunching());
+}
+
+#[test]
+fn stock_critical_battery_checkpoints_and_exits_without_a_shutdown_screen() {
+    let d = tmp_root_with_carts(&["Emerald"]);
+    let mut a = app_playing_in(d.path(), "Emerald");
+    a.set_stock_power_owned();
+    a.on_battery(slot_power::Battery {
+        percent: 1,
+        charge: slot_power::Charge::Charging,
+    });
+    assert!(!a.relaunching());
+    a.on_battery(slot_power::Battery {
+        percent: 1,
+        charge: slot_power::Charge::Discharging,
+    });
+    assert!(a.relaunching());
+    assert!(!a.powering_off() && !a.restarting());
+    assert!(
+        StateRing::new(d.path(), Platform::Gba, Core::Mgba, "Emerald")
+            .read_resume()
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
+fn stock_about_restart_requests_a_device_reboot_not_a_return_to_stock() {
+    let d = tmp_root_with_carts(&["Emerald", "Fusion"]);
+    let mut a = boot(d.path());
+    a.set_power(panel(d.path(), Duration::from_secs(180)).0);
+    a.set_stock_power_owned();
+    a.apply(Action::QuickMenu);
+    for _ in 0..slot_ui::QuickRow::About.position(&a.hidden_rows()) {
+        a.apply(Action::GbaDown(Btn::Down));
+        a.apply(Action::GbaUp(Btn::Down));
+    }
+    a.apply(Action::GbaDown(Btn::A));
+    a.apply(Action::GbaUp(Btn::A));
+    assert!(matches!(a.phase(), Phase::About), "{:?}", a.phase());
+    a.apply(Action::Restart);
+    assert!(a.restarting());
+    assert!(!a.relaunching() && !a.powering_off());
+    a.set_power(slot_power::Power::new(
+        Box::new(Reboot {
+            inner: slot_power::SimPlatform::at(d.path().into()),
+            calls: Default::default(),
+            fail: true,
+        }),
+        Duration::from_secs(180),
+    ));
+    assert!(!a.restart());
+    assert!(matches!(a.phase(), Phase::About));
+    let faces: Vec<_> = slot_ui::Toast::all()
+        .iter()
+        .enumerate()
+        .map(|(n, _)| slot_gfx::TexId::from_raw(n + 900))
+        .collect();
+    let failed = faces[slot_ui::Toast::RestartFailed.index()];
+    a.set_toast_faces(faces);
+    let mut draw = Vec::new();
+    a.draw(&mut draw);
+    assert!(
+        draw.iter()
+            .any(|d| matches!(d, Draw::Tex { tex, .. } if *tex == failed)),
+        "About must actually draw the reboot failure, not only record it"
+    );
+}
+
+#[test]
+fn reboot_request_is_sent_once_and_failure_stays_in_slot_with_a_retry() {
+    for fail in [false, true] {
+        let d = tmp_root_with_carts(&["Emerald"]);
+        let mut a = app_playing_in(d.path(), "Emerald");
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        a.set_stock_power_owned();
+        a.set_power(slot_power::Power::new(
+            Box::new(Reboot {
+                inner: slot_power::SimPlatform::at(d.path().into()),
+                calls: calls.clone(),
+                fail,
+            }),
+            Duration::from_secs(180),
+        ));
+        assert_eq!(a.restart(), !fail);
+        assert!(!a.relaunching());
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        assert!(
+            StateRing::new(d.path(), Platform::Gba, Core::Mgba, "Emerald")
+                .read_resume()
+                .unwrap()
+                .is_some()
+        );
+        if fail {
+            assert!(!a.restarting());
+            assert_eq!(a.toast(), Some(slot_ui::Toast::RestartFailed));
+            assert!(!a.restart());
+            assert_eq!(calls.load(Ordering::Relaxed), 2);
+        } else {
+            assert!(a.restart());
+            assert!(!a.ready_to_restart());
+            assert_eq!(calls.load(Ordering::Relaxed), 1);
+        }
+    }
+}
+
+struct Reboot {
+    inner: slot_power::SimPlatform,
+    calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    fail: bool,
+}
+
+impl slot_power::Platform for Reboot {
+    fn request_restart(&mut self) -> Result<(), String> {
+        self.calls.fetch_add(1, Ordering::Relaxed);
+        if self.fail {
+            Err("mock init refusal".into())
+        } else {
+            Ok(())
+        }
+    }
+    fn root(&self) -> &std::path::Path {
+        self.inner.root()
+    }
+    fn now(&self) -> i64 {
+        self.inner.now()
+    }
+    fn set_backlight(&mut self, _: u8) {}
+    fn set_led(&mut self, _: slot_power::LedState) {}
+    fn set_rumble(&mut self, _: u16) {}
+    fn set_clock(&mut self, _: i64) {}
+    fn battery(&self) -> Option<slot_power::Battery> {
+        None
+    }
+    fn charge(&self) -> slot_power::Charge {
+        slot_power::Charge::Unknown
+    }
+    fn restart(&mut self) -> ! {
+        panic!("legacy restart must not run")
+    }
+    fn poweroff(&mut self) -> ! {
+        panic!("poweroff must not run")
+    }
+}
+
+#[test]
 fn lid_close_flushes_resume_before_dozing() {
     let d = tmp_root_with_carts(&["Emerald"]);
     let mut a = app_playing_in(d.path(), "Emerald");

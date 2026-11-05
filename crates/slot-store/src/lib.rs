@@ -10,6 +10,7 @@ mod bindings;
 pub mod cart_shell;
 mod config;
 mod core;
+pub mod fs;
 pub mod gb;
 mod gb_palette;
 mod gba;

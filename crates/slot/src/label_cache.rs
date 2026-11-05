@@ -101,7 +101,7 @@ pub fn label_art(root: &Path, cart: &Cart) -> Option<Vec<u8>> {
         None => cover(src, w, h),
     };
     if let Some(dir) = cached.parent() {
-        let _ = std::fs::create_dir_all(dir);
+        let _ = slot_store::fs::create_dir_all(dir);
     }
     let (cw, ch) = if art.is_some() { (w, h) } else { (0, 0) };
     let body = art.as_deref().map(|rgba| {
@@ -123,7 +123,7 @@ pub fn label_art(root: &Path, cart: &Cart) -> Option<Vec<u8>> {
     if let Err(e) = slot_store::atomic_write(&cached, &out) {
         eprintln!("slot: label cache: {}: {e}", cached.display());
     }
-    let _ = std::fs::remove_file(cached.with_extension(OLD_EXT));
+    let _ = slot_store::fs::remove_file(cached.with_extension(OLD_EXT));
     art
 }
 

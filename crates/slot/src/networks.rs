@@ -6,6 +6,9 @@ pub const ENTER_PASSWORD: &str = "Enter Password";
 pub const SCAN_NETWORKS: &str = "Scan for Networks";
 pub const WIFI_OFF_MESSAGE: &str = "Turn on Wi-Fi to see networks";
 pub const SCANNING_MESSAGE: &str = "Scanning for networks";
+pub const STOCK_SCAN_MESSAGE: &str = "Scan only; connect in stock Settings";
+pub const STOCK_EMPTY_MESSAGE: &str = "No networks found; use stock Settings";
+pub const STOCK_CONNECT_MESSAGE: &str = "Connections saved by stock Wi-Fi";
 pub const PASSWORD_TITLE: &str = "Password";
 pub const NAME_TITLE: &str = "Network Name";
 pub const OPEN_HINT: &str = "Leave it empty for an open network";
@@ -81,16 +84,30 @@ pub fn list_message(off: bool) -> Option<&'static str> {
 }
 
 pub fn scan_rows(snap: &Snapshot) -> Vec<NetRow> {
-    if snap.scan.is_none() {
+    if snap.scan.is_none() || snap.scan_error.is_some() {
         return Vec::new();
     }
     let mut rows: Vec<NetRow> = nearby(snap).into_iter().map(NetRow::Nearby).collect();
-    rows.push(NetRow::Other);
+    if !snap.scan_only {
+        rows.push(NetRow::Other);
+    }
     rows
 }
 
 pub fn scan_message(snap: &Snapshot) -> Option<&'static str> {
-    snap.scan.is_none().then_some(SCANNING_MESSAGE)
+    if let Some(error) = snap.scan_error {
+        Some(error.label())
+    } else if snap.scan.is_none() {
+        Some(SCANNING_MESSAGE)
+    } else if snap.scan_only {
+        Some(if snap.scan.as_ref().is_some_and(|rows| rows.is_empty()) {
+            STOCK_EMPTY_MESSAGE
+        } else {
+            STOCK_SCAN_MESSAGE
+        })
+    } else {
+        None
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -207,15 +224,16 @@ pub fn page_rows(snap: &Snapshot, ssid: &str, off: bool) -> Vec<PageRow> {
     let saved = snap.saved.iter().any(|s| s.ssid == ssid);
     let rejected = matches!(&snap.failure, Some((s, Failure::WrongPassword)) if s == ssid);
     if !off && saved {
-        rows.push(match active(snap, ssid) {
-            true => PageRow::Disconnect,
-            false => PageRow::Connect,
-        });
+        if !active(snap, ssid) {
+            rows.push(PageRow::Connect);
+        } else if !snap.stock_owned {
+            rows.push(PageRow::Disconnect);
+        }
     }
     if !off && rejected {
         rows.push(PageRow::Password);
     }
-    if saved {
+    if saved && !snap.stock_owned {
         rows.extend([PageRow::AutoJoin, PageRow::Forget]);
     }
     rows
@@ -231,6 +249,9 @@ pub fn status_text(snap: &Snapshot, ssid: &str, off: bool) -> String {
         }
     }
     if let Some(p) = in_progress(snap, ssid) {
+        if snap.stock_owned && p == Phase::GettingIp {
+            return "Waiting for Stock DHCP".into();
+        }
         return p.label().into();
     }
     if !ours(snap, ssid) {
@@ -238,6 +259,7 @@ pub fn status_text(snap: &Snapshot, ssid: &str, off: bool) -> String {
     }
     match snap.status.state {
         State::Completed if snap.status.ip.is_some() => Phase::Connected.label(),
+        State::Completed if snap.stock_owned => "Waiting for Stock DHCP",
         State::Completed => Phase::GettingIp.label(),
         State::Handshake => Phase::Authenticating.label(),
         State::Associating => Phase::Connecting.label(),

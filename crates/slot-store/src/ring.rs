@@ -34,7 +34,7 @@ impl StateRing {
     }
 
     pub fn push(&self, state: &[u8], thumb_png: &[u8], stamp: &str) -> std::io::Result<()> {
-        std::fs::create_dir_all(&self.dir)?;
+        crate::fs::create_dir_all(&self.dir)?;
         atomic_write(&self.path(stamp, THUMB_EXT), thumb_png)?;
         atomic_write(&self.path(stamp, STATE_EXT), state)?;
         self.evict()
@@ -76,13 +76,13 @@ impl StateRing {
     }
 
     pub fn remove(&self, stamp: &str) -> std::io::Result<()> {
-        std::fs::remove_file(self.stamped(stamp, STATE_EXT)?)?;
-        let _ = std::fs::remove_file(self.path(stamp, THUMB_EXT));
+        crate::fs::remove_file(self.stamped(stamp, STATE_EXT)?)?;
+        let _ = crate::fs::remove_file(self.path(stamp, THUMB_EXT));
         Ok(())
     }
 
     pub fn write_resume(&self, state: &[u8]) -> std::io::Result<()> {
-        std::fs::create_dir_all(&self.dir)?;
+        crate::fs::create_dir_all(&self.dir)?;
         atomic_write(&self.path(RESUME, STATE_EXT), state)
     }
 
@@ -104,7 +104,7 @@ impl StateRing {
             return Ok(None);
         }
         let to = self.free_refused(stamp);
-        std::fs::rename(&from, &to)?;
+        crate::fs::rename(&from, &to)?;
         sync_dir(&to);
         Ok(Some(to))
     }
@@ -123,8 +123,8 @@ impl StateRing {
 
     fn evict(&self) -> std::io::Result<()> {
         for old in self.list()?.into_iter().skip(RING_MAX) {
-            std::fs::remove_file(&old.state)?;
-            let _ = std::fs::remove_file(&old.thumb);
+            crate::fs::remove_file(&old.state)?;
+            let _ = crate::fs::remove_file(&old.thumb);
         }
         Ok(())
     }

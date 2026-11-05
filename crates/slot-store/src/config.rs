@@ -19,19 +19,19 @@ const RENAMED: [(&str, &str); 4] = [
 
 pub fn move_config(root: &Path) -> io::Result<()> {
     let config = root.join(CONFIG_DIR);
-    std::fs::create_dir_all(&config)?;
+    crate::fs::create_dir_all(&config)?;
     for name in MOVED {
         let old = root.join("System").join(name);
         let new = config.join(name);
         if old.is_file() && !new.exists() {
-            std::fs::rename(&old, &new)?;
+            crate::fs::rename(&old, &new)?;
         }
     }
     for (old, new) in RENAMED {
         let old = root.join(old);
         let new = root.join(new);
         if old.is_file() && !new.exists() {
-            std::fs::rename(&old, &new)?;
+            crate::fs::rename(&old, &new)?;
         }
     }
     Ok(())

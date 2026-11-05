@@ -1,4 +1,4 @@
-use std::fs;
+use slot_store::fs;
 use std::io::{self, Read};
 use std::path::Path;
 

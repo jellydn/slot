@@ -1,4 +1,3 @@
-use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -469,7 +468,8 @@ impl Api for HttpApi {
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse::<u64>().ok());
         let mut reader = reply.into_body().into_reader();
-        let mut file = File::create(to).map_err(|e| ApiError::Write(e.to_string()))?;
+        let mut file =
+            slot_store::fs::create_file(to).map_err(|e| ApiError::Write(e.to_string()))?;
         let mut buf = vec![0u8; CHUNK];
         let mut total = 0u64;
         loop {

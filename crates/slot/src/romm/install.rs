@@ -56,9 +56,9 @@ pub fn sweep(root: &Path) {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            let _ = std::fs::remove_dir_all(&path);
+            let _ = slot_store::fs::remove_dir_all(&path);
         } else {
-            let _ = std::fs::remove_file(&path);
+            let _ = slot_store::fs::remove_file(&path);
         }
     }
 }
@@ -112,7 +112,7 @@ struct Temps(Vec<PathBuf>);
 impl Drop for Temps {
     fn drop(&mut self) {
         for path in &self.0 {
-            let _ = std::fs::remove_file(path);
+            let _ = slot_store::fs::remove_file(path);
         }
     }
 }
@@ -162,7 +162,7 @@ pub fn install(
     }
 
     let temp_dir = root.join(TEMP_DIR);
-    if std::fs::create_dir_all(&temp_dir).is_err() {
+    if slot_store::fs::create_dir_all(&temp_dir).is_err() {
         return failed(CARD_FULL);
     }
     let stem = temp_stem(&req.id);
@@ -207,7 +207,7 @@ pub fn install(
         return failed(CARD_FULL);
     }
     let target = games.join(&final_name);
-    if std::fs::rename(&source, &target).is_err() {
+    if slot_store::fs::rename(&source, &target).is_err() {
         return failed(SAVE_FAILED);
     }
     let rom_stem = Path::new(&final_name)
@@ -255,7 +255,7 @@ fn unpack(
     if free(root) < compressed.saturating_add(entry.size()) {
         return Err(failed(CARD_FULL));
     }
-    let mut out = File::create(unpacked).map_err(|_| failed(CARD_FULL))?;
+    let mut out = slot_store::fs::create_file(unpacked).map_err(|_| failed(CARD_FULL))?;
     let mut buf = vec![0u8; CHUNK];
     loop {
         if cancel.is_set() {

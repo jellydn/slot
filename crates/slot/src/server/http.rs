@@ -64,17 +64,18 @@ impl Body {
         name.push(".part");
         let part = dest.with_file_name(name);
         let result = (|| {
-            let mut f = File::create(&part)?;
+            slot_store::fs::check_write(dest)?;
+            let mut f = slot_store::fs::create_file(&part)?;
             io::copy(&mut self, &mut f)?;
             if self.remaining > 0 {
                 return Err(io::ErrorKind::UnexpectedEof.into());
             }
             f.sync_all()?;
             drop(f);
-            std::fs::rename(&part, dest)
+            slot_store::fs::rename(&part, dest)
         })();
         if result.is_err() {
-            let _ = std::fs::remove_file(&part);
+            let _ = slot_store::fs::remove_file(&part);
         }
         result
     }

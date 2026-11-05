@@ -21,6 +21,24 @@ fn the_headline_rows_read_as_a_device_plate() {
 }
 
 #[test]
+fn trimui_about_identifies_the_retained_platform_without_anbernic_ratings() {
+    let all = sticker_lines(&StickerFields {
+        model: "TRIMUI SMART PRO",
+        ..fields()
+    })
+    .join("\n");
+    assert!(all.contains("TG5040"), "{all}");
+    assert!(all.contains("TRIMUI SMART PRO"), "{all}");
+    assert!(all.contains("STOCK TINA KERNEL"), "{all}");
+    assert!(!all.contains("AGS-102") && !all.contains("1.5A"), "{all}");
+    assert!(!all.contains("UNDERLYING OS IS"), "{all}");
+    assert!(
+        all.contains("BASEOS BY PVAIBHAV"),
+        "keep upstream attribution"
+    );
+}
+
+#[test]
 fn the_input_row_carries_the_real_dc_symbol() {
     let all = sticker_lines(&fields()).join("\n");
     assert!(all.contains(slot_ui::DC), "the rating row lost its symbol");

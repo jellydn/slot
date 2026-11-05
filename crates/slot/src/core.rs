@@ -21,6 +21,9 @@ pub fn dylib_name(core: Core) -> String {
 }
 
 fn candidates(root: &Path, core: Core) -> Vec<PathBuf> {
+    if cfg!(feature = "stock-tg5040") {
+        return vec![root.join("System").join(dylib_name(core))];
+    }
     if let Some(named) = std::env::var_os(CORE_ENV) {
         return vec![PathBuf::from(named)];
     }
@@ -482,17 +485,22 @@ mod tests {
     }
 
     #[test]
-    fn the_env_override_ignores_which_core_was_asked_for() {
+    fn core_override_obeys_the_platform_policy() {
         let _g = lock();
         std::env::set_var(CORE_ENV, "/dev/null/named-core");
         let root = Path::new("/root");
         let mgba = candidates(root, Core::Mgba);
         let gpsp = candidates(root, Core::Gpsp);
         std::env::remove_var(CORE_ENV);
-        assert_eq!(mgba, vec![PathBuf::from("/dev/null/named-core")]);
-        assert_eq!(
-            mgba, gpsp,
-            "the override stopped winning for one of the cores"
-        );
+        if cfg!(feature = "stock-tg5040") {
+            assert_eq!(mgba, vec![root.join("System").join(dylib_name(Core::Mgba))]);
+            assert_eq!(gpsp, vec![root.join("System").join(dylib_name(Core::Gpsp))]);
+        } else {
+            assert_eq!(mgba, vec![PathBuf::from("/dev/null/named-core")]);
+            assert_eq!(
+                mgba, gpsp,
+                "the override stopped winning for one of the cores"
+            );
+        }
     }
 }

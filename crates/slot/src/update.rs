@@ -137,10 +137,10 @@ pub fn verify(bytes: &[u8], release: &Release) -> Result<(), UpdateFail> {
 
 pub fn stage(root: &Path, zip: &[u8]) -> Result<(), UpdateFail> {
     let dir = root.join(STAGING);
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = slot_store::fs::remove_dir_all(&dir);
     let result = unpack(&dir, zip);
     if result.is_err() {
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = slot_store::fs::remove_dir_all(&dir);
     }
     result
 }
@@ -156,11 +156,11 @@ fn unpack(dir: &Path, zip: &[u8]) -> Result<(), UpdateFail> {
         };
         let out = dir.join(&rel);
         if let Some(parent) = out.parent() {
-            std::fs::create_dir_all(parent).map_err(|_| UpdateFail::Bad)?;
+            slot_store::fs::create_dir_all(parent).map_err(|_| UpdateFail::Bad)?;
         }
         let mut bytes = Vec::new();
         entry.read_to_end(&mut bytes).map_err(|_| UpdateFail::Bad)?;
-        std::fs::write(&out, bytes).map_err(|_| UpdateFail::Bad)?;
+        slot_store::fs::write(&out, bytes).map_err(|_| UpdateFail::Bad)?;
         listed.push(rel.to_string_lossy().replace('\\', "/"));
     }
     if REQUIRED.iter().any(|r| !listed.iter().any(|l| l == r)) {
@@ -499,7 +499,7 @@ pub fn install_baseos_with(
     let done = root.join(&name);
     let part = root.join(format!("{name}.part"));
     let result = download_bosupd(&part, fetch_into, release)
-        .and_then(|()| std::fs::rename(&part, &done).map_err(|_| UpdateFail::Download))
+        .and_then(|()| slot_store::fs::rename(&part, &done).map_err(|_| UpdateFail::Download))
         .and_then(|()| match status() {
             Some(text) => will_apply(&text, &name).map_err(UpdateFail::Rejected),
             None => Err(UpdateFail::Rejected("BaseOS did not see the update".into())),
@@ -507,8 +507,8 @@ pub fn install_baseos_with(
     match result {
         Ok(()) => UpdateEvent::Staged,
         Err(e) => {
-            let _ = std::fs::remove_file(&part);
-            let _ = std::fs::remove_file(&done);
+            let _ = slot_store::fs::remove_file(&part);
+            let _ = slot_store::fs::remove_file(&done);
             UpdateEvent::Failed(e)
         }
     }
@@ -519,7 +519,7 @@ fn download_bosupd(
     fetch_into: &mut FetchInto<'_>,
     release: &Release,
 ) -> Result<(), UpdateFail> {
-    let mut file = std::fs::File::create(part).map_err(|_| UpdateFail::Download)?;
+    let mut file = slot_store::fs::create_file(part).map_err(|_| UpdateFail::Download)?;
     let digest = fetch_into(&release.url, &mut file)?;
     file.sync_all().map_err(|_| UpdateFail::Download)?;
     let size = file.metadata().map_err(|_| UpdateFail::Download)?.len();
@@ -551,7 +551,7 @@ pub fn clean_baseos(root: &Path, target: &str, running: &str) {
             _ => false,
         };
         if stale {
-            let _ = std::fs::remove_file(entry.path());
+            let _ = slot_store::fs::remove_file(entry.path());
         }
     }
 }
@@ -602,6 +602,9 @@ impl UpdateJobs for UpdateQueue {
 }
 
 pub fn update_jobs(root: PathBuf) -> Box<dyn UpdateJobs> {
+    if cfg!(feature = "stock-tg5040") {
+        return no_update_jobs();
+    }
     let (jobs, rx) = channel::<(UpdateJob, Ticket)>();
     let (tx, events) = channel::<UpdateEvent>();
     std::thread::spawn(move || {

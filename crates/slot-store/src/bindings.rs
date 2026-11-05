@@ -529,7 +529,7 @@ pub fn write_shortcuts(root: &Path, keys: &ShortcutKeys) -> std::io::Result<()> 
 
 fn write(path: &Path, text: &str) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
+        crate::fs::create_dir_all(dir)?;
     }
     atomic_write(path, text.as_bytes())
 }

@@ -41,7 +41,7 @@ pub const DIRS: [&str; 36] = [
 
 pub fn ensure(root: &Path) {
     for sub in DIRS {
-        let _ = std::fs::create_dir_all(root.join(sub));
+        let _ = slot_store::fs::create_dir_all(root.join(sub));
     }
     move_label_cache(root);
     crate::romm::install::sweep(root);
@@ -55,11 +55,11 @@ pub fn move_label_cache(root: &Path) {
     let labels = old.join("Labels");
     let new = root.join("Cache/Labels");
     if labels.is_dir() && !new.exists() {
-        let _ = std::fs::create_dir_all(root.join("Cache"));
-        let _ = std::fs::rename(&labels, &new);
+        let _ = slot_store::fs::create_dir_all(root.join("Cache"));
+        let _ = slot_store::fs::rename(&labels, &new);
     }
     if old.exists() {
-        let _ = std::fs::remove_dir_all(&old);
+        let _ = slot_store::fs::remove_dir_all(&old);
     }
 }
 

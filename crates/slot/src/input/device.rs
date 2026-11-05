@@ -46,6 +46,7 @@ impl DeviceInput {
                 node.display(),
                 device_name(sys, &node)
             );
+            #[cfg(not(feature = "stock-tg5040"))]
             quicken_poll(sys, &node);
             let queue = pending.clone();
             let steers = stick.clone();
@@ -68,8 +69,10 @@ impl DeviceInput {
     }
 }
 
+#[cfg(not(feature = "stock-tg5040"))]
 const POLL_MS: u32 = 10;
 
+#[cfg(not(feature = "stock-tg5040"))]
 fn quicken_poll(sys: &Path, node: &Path) {
     let Some(name) = node.file_name() else {
         return;
@@ -155,9 +158,9 @@ struct Trace {
 impl Trace {
     fn start(root: &Path, dev: &Path, sys: &Path) -> Option<Arc<Trace>> {
         let dir = crate::root::logs_dir(root);
-        let _ = std::fs::create_dir_all(&dir);
+        let _ = slot_store::fs::create_dir_all(&dir);
         let path = dir.join(trace::TRACE_FILE);
-        let mut file = match File::create(&path) {
+        let mut file = match slot_store::fs::create_file(&path) {
             Ok(f) => f,
             Err(e) => {
                 eprintln!("slot: {}: {e}", path.display());

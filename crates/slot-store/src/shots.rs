@@ -99,6 +99,6 @@ impl ShotDir {
                 format!("not a screenshot stamp: {stamp}"),
             ));
         }
-        std::fs::remove_file(self.path(stamp))
+        crate::fs::remove_file(self.path(stamp))
     }
 }

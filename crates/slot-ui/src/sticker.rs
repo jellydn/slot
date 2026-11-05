@@ -64,10 +64,31 @@ pub const COPYRIGHT: &str = "\u{a9} 2026 BRANDON T. KOWALSKI";
 
 pub const HOME: &str = "SEE README.";
 
+fn trimui(f: &StickerFields) -> bool {
+    f.model == "TRIMUI SMART PRO"
+}
+
+fn credits(f: &StickerFields) -> [&'static str; 12] {
+    let mut lines = CREDITS;
+    if trimui(f) {
+        lines[4] = "UPSTREAM PLATFORM WORK:";
+    }
+    lines
+}
+
 pub fn head_rows(f: &StickerFields) -> [String; 3] {
     [
-        "MODEL NO. AGS-102".into(),
-        format!("INPUT : 5V{DC}1.5A"),
+        if trimui(f) {
+            "MODEL NO. TG5040"
+        } else {
+            "MODEL NO. AGS-102"
+        }
+        .into(),
+        if trimui(f) {
+            f.model.into()
+        } else {
+            format!("INPUT : 5V{DC}1.5A")
+        },
         match f.battery {
             Some(p) => format!("BATTERY : LI-ION ({p}%)"),
             None => "BATTERY : LI-ION".to_string(),
@@ -82,13 +103,17 @@ fn split_check(serial: &str) -> (&str, &str) {
 
 fn version_lines(f: &StickerFields) -> Vec<String> {
     let mut out = vec![format!("VERSION {}", f.version)];
-    out.extend(f.baseos.map(|v| format!("BASEOS {v}")));
+    if trimui(f) {
+        out.push("STOCK TINA KERNEL".into());
+    } else {
+        out.extend(f.baseos.map(|v| format!("BASEOS {v}")));
+    }
     out
 }
 
 pub fn sticker_lines(f: &StickerFields) -> Vec<String> {
     let mut out: Vec<String> = head_rows(f).into();
-    out.extend(CREDITS.iter().map(|s| s.to_string()));
+    out.extend(credits(f).iter().map(|s| s.to_string()));
     out.extend(ORIGIN.iter().map(|s| s.to_string()));
     let (body, check) = split_check(f.serial);
     out.push(format!("{body} {check}"));
@@ -248,7 +273,7 @@ pub fn sticker_face(f: &StickerFields) -> UndoFace {
         y = c.print(left, y, line, HEAD_PX, WHITE);
     }
     y += 3.0;
-    for line in CREDITS {
+    for line in credits(f) {
         y = c.print(left, y, line, BODY_PX, WHITE);
     }
     y += 3.0;
@@ -306,7 +331,10 @@ pub fn sticker_face(f: &StickerFields) -> UndoFace {
 
     let mut ry = panel_y as f32 + panel_h as f32 + 10.0;
     let right_edge = (panel_x + panel_w) as f32;
-    if let Some(mark) = wordmark(f.model) {
+    if trimui(f) {
+        let width = c.print_measure(f.model, 15.0);
+        ry = c.print(right_edge - width - 10.0, ry, f.model, 15.0, WHITE) + 4.0;
+    } else if let Some(mark) = wordmark(f.model) {
         let (mw, mh) = mark.1;
         c.blit(
             (right_edge - mw as f32 - 10.0) as u32,

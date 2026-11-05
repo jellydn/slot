@@ -1,5 +1,5 @@
+use slot_store::fs;
 use std::collections::BTreeSet;
-use std::fs;
 use std::path::Path;
 
 use slot_store::{Cart, Platform};

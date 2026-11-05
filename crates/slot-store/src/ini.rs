@@ -71,7 +71,7 @@ pub fn write(root: &Path, file: &str, key: &str, value: &str) -> std::io::Result
     let out = set(&existing, key, Some(value))
         .map_err(|e| std::io::Error::new(e.kind(), format!("{file} {e}")))?;
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
+        crate::fs::create_dir_all(dir)?;
     }
     crate::atomic::atomic_write(&path, out.as_bytes())
 }

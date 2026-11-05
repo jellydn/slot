@@ -1,0 +1,8 @@
+{
+  "package": "com.slot.stocktest",
+  "label": "Slot Stock Test",
+  "icontop": "",
+  "icon": "",
+  "launch": "launch.sh",
+  "description": "Supervised stock TG5040 candidate. Full Slot presentation is untested."
+}

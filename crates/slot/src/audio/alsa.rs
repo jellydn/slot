@@ -22,7 +22,10 @@ const PERIOD_FRAMES: usize = 512;
 
 const RELEASE_AFTER: Duration = Duration::from_secs(3);
 
+#[cfg(not(feature = "stock-tg5040"))]
 const DEVICES: [&str; 4] = ["plug:default", "default", "plughw:0,0", "hw:0,0"];
+#[cfg(feature = "stock-tg5040")]
+const DEVICES: [&str; 2] = ["plug:default", "default"];
 
 type PcmOpen = unsafe extern "C" fn(*mut *mut c_void, *const c_char, c_int, c_int) -> c_int;
 type PcmSetParams =

@@ -5,6 +5,9 @@ macro_rules! eprintln {
     }};
 }
 
+#[cfg(all(feature = "stock-tg5040", feature = "host"))]
+compile_error!("stock-tg5040 requires --no-default-features; it cannot use the host backend");
+
 pub mod app;
 pub mod art;
 pub mod audio;
@@ -59,6 +62,7 @@ pub mod shot_loader;
 pub mod shot_writer;
 pub mod sntp;
 pub mod state_writer;
+pub mod stock_tg5040;
 pub mod studio;
 pub mod studio_faces;
 pub mod studio_view;

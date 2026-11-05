@@ -235,6 +235,10 @@ pub fn remember(card: &Path) {
 }
 
 pub fn refresh(card: &Path) {
+    if cfg!(feature = "stock-tg5040") {
+        eprintln!("slot: stock bootlogo changes refused");
+        return;
+    }
     let Some(logo) = chosen(card) else {
         return;
     };

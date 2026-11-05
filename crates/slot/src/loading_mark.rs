@@ -16,13 +16,13 @@ impl LoadingMark {
     }
 
     pub fn set(&self, stem: &str) {
-        if let Err(e) = std::fs::write(&self.0, stem) {
+        if let Err(e) = slot_store::fs::write(&self.0, stem) {
             eprintln!("slot: loading mark: {}: {e}", self.0.display());
         }
     }
 
     pub fn clear(&self) {
-        let _ = std::fs::remove_file(&self.0);
+        let _ = slot_store::fs::remove_file(&self.0);
     }
 
     pub fn left(&self) -> Option<String> {

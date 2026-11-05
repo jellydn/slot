@@ -17,7 +17,10 @@ fn packet(kind: u16, code: u16, value: i32) -> [u8; EVENT_BYTES] {
 const EV_KEY: u16 = 0x01;
 const EV_SW: u16 = 0x05;
 const EV_SYN: u16 = 0x00;
+#[cfg(not(feature = "stock-tg5040"))]
 const CODE_R1: u16 = 0x135;
+#[cfg(feature = "stock-tg5040")]
+const CODE_R1: u16 = 0x137;
 const KEY_VOLUMEUP: u16 = 115;
 const SW_LID: u16 = 0x00;
 
@@ -195,7 +198,7 @@ fn no_trace_file_is_written_unless_one_was_asked_for() {
 }
 
 #[test]
-fn the_pad_is_polled_as_fast_as_the_kernel_tick_allows() {
+fn the_pad_poll_rate_follows_the_platform_policy() {
     let d = input_tree();
     let sys = d.path().join("sys/class/input");
     write(&sys.join("event1/device/poll"), "20\n");
@@ -207,8 +210,12 @@ fn the_pad_is_polled_as_fast_as_the_kernel_tick_allows() {
     let poll = |node: &str| std::fs::read_to_string(sys.join(node).join("device/poll")).unwrap();
     assert_eq!(
         poll("event1").trim(),
-        "10",
-        "the pad is still polled at 20 ms"
+        if cfg!(feature = "stock-tg5040") {
+            "20"
+        } else {
+            "10"
+        },
+        "stock must preserve the poll rate; other device builds reduce it to 10 ms"
     );
     assert_eq!(
         poll("event0").trim(),
@@ -234,6 +241,7 @@ fn a_pad_already_polled_faster_is_left_alone() {
 }
 
 #[test]
+#[cfg(not(feature = "stock-tg5040"))]
 fn the_pad_maps_by_the_codes_the_device_sends() {
     let expected = [
         (0x130, Btn::A),
@@ -290,9 +298,42 @@ fn the_tsp_pad_maps_by_the_codes_trimui_sends() {
             Some(want),
             "code {code:#x}"
         );
+        #[cfg(feature = "stock-tg5040")]
+        if !matches!(code, 0x130 | 0x131) {
+            assert_eq!(slot::input::evdev::code_to_btn(code), Some(want));
+        }
     }
     for code in [0x132, 0x135, 0x162] {
         assert_eq!(code_to_btn_for(PadMap::Tsp, code), None, "code {code:#x}");
+    }
+}
+
+#[test]
+fn stock_ab_normalization_preserves_knulli_and_anbernic_tables() {
+    use slot::input::evdev::{code_to_btn_for, PadMap};
+    for map in [PadMap::Tsp, PadMap::Anbernic] {
+        assert_eq!(code_to_btn_for(map, 0x130), Some(Btn::A));
+        assert_eq!(code_to_btn_for(map, 0x131), Some(Btn::B));
+    }
+    assert_eq!(code_to_btn_for(PadMap::Anbernic, 0x132), Some(Btn::Y));
+    assert_eq!(code_to_btn_for(PadMap::Anbernic, 0x133), Some(Btn::X));
+}
+
+#[test]
+#[cfg(feature = "stock-tg5040")]
+fn stock_ab_presses_releases_and_repeats_follow_the_button_labels() {
+    for (code, btn) in [(0x131, Btn::A), (0x130, Btn::B)] {
+        for (value, want) in [
+            (1, Some(RawEvent::Down(btn))),
+            (0, Some(RawEvent::Up(btn))),
+            (2, None),
+        ] {
+            assert_eq!(
+                decode(&packet(EV_KEY, code, value)).and_then(to_raw),
+                want,
+                "code {code:#x}, value {value}"
+            );
+        }
     }
 }
 

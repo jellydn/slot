@@ -105,10 +105,10 @@ fn part_of(path: &Path) -> PathBuf {
 
 fn write_part(path: &Path, png: &[u8]) -> std::io::Result<PathBuf> {
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
+        slot_store::fs::create_dir_all(dir)?;
     }
     let part = part_of(path);
-    let mut file = std::fs::File::create(&part)?;
+    let mut file = slot_store::fs::create_file(&part)?;
     file.write_all(png)?;
     file.sync_all()?;
     Ok(part)
@@ -120,10 +120,10 @@ pub fn write_new(path: &Path, png: &[u8]) -> std::io::Result<bool> {
     }
     let part = write_part(path, png)?;
     if path.exists() {
-        let _ = std::fs::remove_file(&part);
+        let _ = slot_store::fs::remove_file(&part);
         return Ok(false);
     }
-    std::fs::rename(&part, path)?;
+    slot_store::fs::rename(&part, path)?;
     Ok(true)
 }
 
@@ -151,7 +151,7 @@ pub fn apply_label(root: &Path, cart: &Cart, src: Option<&Path>) -> std::io::Res
     let label = label_path(root, cart);
     let done = match src {
         Some(src) => write_replacing(&label, &std::fs::read(src)?),
-        None if label.exists() => std::fs::remove_file(label),
+        None if label.exists() => slot_store::fs::remove_file(label),
         None => Ok(()),
     };
     forget_cached(root, cart);
@@ -165,10 +165,10 @@ pub fn relabel(root: &Path, cart: &Cart, png: &[u8]) -> std::io::Result<()> {
 }
 
 fn forget_cached(root: &Path, cart: &Cart) {
-    let _ = std::fs::remove_file(crate::label_cache::cache_path(root, cart));
+    let _ = slot_store::fs::remove_file(crate::label_cache::cache_path(root, cart));
 }
 
 pub fn write_replacing(path: &Path, png: &[u8]) -> std::io::Result<()> {
     let part = write_part(path, png)?;
-    std::fs::rename(&part, path)
+    slot_store::fs::rename(&part, path)
 }

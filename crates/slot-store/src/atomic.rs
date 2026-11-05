@@ -6,11 +6,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    crate::fs::check_write(path)?;
     let tmp = temp_path(path);
+    crate::fs::check_write(&tmp)?;
     match write_then_rename(&tmp, path, bytes) {
         Ok(()) => {}
         Err(e) => {
-            let _ = std::fs::remove_file(&tmp);
+            let _ = crate::fs::remove_file(&tmp);
             return Err(e);
         }
     }
@@ -31,11 +33,11 @@ pub(crate) fn sync_dir(path: &Path) {
 }
 
 fn write_then_rename(tmp: &Path, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let mut f = File::create(tmp)?;
+    let mut f = crate::fs::create_file(tmp)?;
     f.write_all(bytes)?;
     f.sync_all()?;
     drop(f);
-    std::fs::rename(tmp, path)
+    crate::fs::rename(tmp, path)
 }
 
 const NAME_MAX: usize = 255;
@@ -64,7 +66,7 @@ pub fn sweep_temps(dir: &Path) {
         match entry.file_type() {
             Ok(t) if t.is_dir() => sweep_temps(&path),
             Ok(t) if t.is_file() && left_by_another_run(&entry.file_name().to_string_lossy()) => {
-                if let Err(e) = std::fs::remove_file(&path) {
+                if let Err(e) = crate::fs::remove_file(&path) {
                     eprintln!("slot: temp sweep: {}: {e}", path.display());
                 }
             }

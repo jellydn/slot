@@ -1,4 +1,4 @@
-use std::fs::{self, File, OpenOptions};
+use slot_store::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
@@ -549,6 +549,7 @@ fn upload(
         part_name.push(".part");
         let part = dest.with_file_name(part_name);
         let result = (|| -> io::Result<()> {
+            fs::check_write(&part)?;
             let _ = fs::remove_file(&part);
             let mut f = OpenOptions::new()
                 .write(true)

@@ -9,6 +9,7 @@ mod device;
 mod motor;
 mod power;
 mod sim;
+mod stock;
 
 pub use device::{
     card_kernel_lines, card_mount_in, has_bit, motor_change, read_only, read_only_in,
@@ -18,6 +19,7 @@ pub use device::{
 pub use motor::Motor;
 pub use power::Power;
 pub use sim::SimPlatform;
+pub use stock::StockPlatform;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -62,6 +64,11 @@ pub trait Platform: Send {
     fn root(&self) -> &Path;
     fn now(&self) -> i64;
     fn set_clock(&mut self, secs: i64);
+
+    /// Request an init-managed reboot without requiring the frontend to exit.
+    fn request_restart(&mut self) -> Result<(), String> {
+        self.restart()
+    }
 
     fn set_clock_in_background(&mut self, secs: i64) {
         self.set_clock(secs);

@@ -1,0 +1,72 @@
+{
+  "status": "HOST_REVIEW_ONLY_NOT_AUTHORIZED_TO_DELETE",
+  "target_mount": "/Volumes/TSP",
+  "baseline_zip_sha256": "3d01c44e76f25d26c0470c5e1aae2804a3113c44f50d3d7273264361adca1c05",
+  "baseline_proposal_sha256": "ee8507b79682ad1c74a47142b5d3aeb87328180dcf95b95c88600c93aeec3258",
+  "preconditions": [
+    "Separate owner approval for these exact eight removals",
+    "Fresh intended removable FAT32 card identity check, no alternate mount",
+    "All targets must be regular, unlinked files with exact size and SHA256 below",
+    "Reopen and hash-verify Mac backups of all eight files before any removal",
+    "Stop on any substantive conflict or pending Apps/.update; do not apply it",
+    "No recursive removal, directory removal, glob expansion or metadata cleanup"
+  ],
+  "preserve": [
+    "Apps/Grout/grout/config.json (runtime settings and possible token, not outer descriptor)",
+    "All cache, save_slots.json, downloads, ROMs, BIOS, saves, artwork and user mappings",
+    "All other files including unknown or changed package artifacts",
+    "Apps/.update and all AppleDouble companions",
+    "All directories, including Apps/Grout and now-empty subdirectories",
+    "All Slot files, startup, cores, settings, games and saves"
+  ],
+  "files": [
+    {
+      "target": "Apps/Grout/LICENSE",
+      "action": "remove_if_exact_after_verified_backup",
+      "bytes": 1096,
+      "old_sha256": "f8535bb4329d754f9e08053a74845edd4b84f7810da3a58a33c9c02321a3ccae"
+    },
+    {
+      "target": "Apps/Grout/README.md",
+      "action": "remove_if_exact_after_verified_backup",
+      "bytes": 4715,
+      "old_sha256": "f18e769881c7a903a017c596c449c1746e4a2a2fbe27371e318bd1e2d8fffb27"
+    },
+    {
+      "target": "Apps/Grout/config.json",
+      "action": "remove_if_exact_after_verified_backup",
+      "bytes": 159,
+      "old_sha256": "26100247564d2f99904c0971a5bd7b2d81798d574308be88a002194478b03263"
+    },
+    {
+      "target": "Apps/Grout/grout/grout",
+      "action": "remove_if_exact_after_verified_backup",
+      "bytes": 48647736,
+      "old_sha256": "9d5c6a51683462aa81ce83baef65940c65105603e6a7b3ef588ef815b6ed6958"
+    },
+    {
+      "target": "Apps/Grout/grout/lib/libSDL2_gfx-1.0.so.0",
+      "action": "remove_if_exact_after_verified_backup",
+      "bytes": 65344,
+      "old_sha256": "8f124e2666901f68913fcce997816c167ab28a5723c709803eed4d91ad1f24ad"
+    },
+    {
+      "target": "Apps/Grout/grout.png",
+      "action": "remove_if_exact_after_verified_backup",
+      "bytes": 15665,
+      "old_sha256": "656cdfe1debc7f70c803c63a60dec3c3588482a3aa87130c92febb13e3dd7743"
+    },
+    {
+      "target": "Apps/Grout/launch.sh",
+      "action": "remove_if_exact_after_verified_backup",
+      "bytes": 264,
+      "old_sha256": "5b51e2149a192823662a07a6200d86b1f43343bee81e9ea742aa2e7433951e12"
+    },
+    {
+      "target": "Apps/Grout/slot-launch.sh",
+      "action": "remove_if_exact_after_verified_backup",
+      "bytes": 2266,
+      "old_sha256": "cb6d48c24ff1612533eba58f4af4565f7584a2c22152709d233e9e5049741f51"
+    }
+  ]
+}

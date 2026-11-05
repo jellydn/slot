@@ -1,6 +1,8 @@
 pub mod attempt;
 mod fake;
 pub mod sp;
+pub mod stock;
+pub mod stock_station;
 mod worker;
 pub mod wpa;
 
@@ -42,6 +44,18 @@ pub struct Status {
 }
 
 pub trait Backend: Send {
+    fn stock_owned(&self) -> bool {
+        false
+    }
+    fn connection_error(&self) -> Option<Failure> {
+        None
+    }
+    fn scan_only(&self) -> bool {
+        false
+    }
+    fn scan_error(&self) -> Option<ScanError> {
+        None
+    }
     fn start(&mut self) -> bool;
     fn stop(&mut self);
     fn block(&mut self);
@@ -80,10 +94,30 @@ pub enum Cmd {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Snapshot {
+    pub stock_owned: bool,
+    pub scan_only: bool,
+    pub scan_error: Option<ScanError>,
     pub held: bool,
     pub saved: Vec<Saved>,
     pub scan: Option<Vec<Scanned>>,
     pub status: Status,
     pub attempt: Option<(String, Phase)>,
     pub failure: Option<(String, Failure)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanError {
+    Unavailable,
+    Failed,
+    TimedOut,
+}
+
+impl ScanError {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Unavailable => "Wi-Fi unavailable; use stock Settings",
+            Self::Failed => "Scan failed; use stock Settings",
+            Self::TimedOut => "Scan timed out; use stock Settings",
+        }
+    }
 }

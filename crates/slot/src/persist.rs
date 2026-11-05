@@ -64,7 +64,7 @@ pub fn write_sav(root: &Path, platform: Platform, stem: &str, sav: &[u8]) -> std
         }
     }
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
+        slot_store::fs::create_dir_all(dir)?;
     }
     atomic_write(&path, sav)?;
     Ok(true)

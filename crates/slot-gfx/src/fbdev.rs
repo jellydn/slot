@@ -37,6 +37,8 @@ type SwapInterval = unsafe extern "C" fn(Ptr, i32) -> u32;
 type GetProcAddress = unsafe extern "C" fn(*const c_char) -> *const c_void;
 type GetError = unsafe extern "C" fn() -> i32;
 type Terminate = unsafe extern "C" fn(Ptr) -> u32;
+type Destroy = unsafe extern "C" fn(Ptr, Ptr) -> u32;
+type ReleaseThread = unsafe extern "C" fn() -> u32;
 
 struct Egl {
     get_display: GetDisplay,
@@ -52,6 +54,9 @@ struct Egl {
     get_proc_address: GetProcAddress,
     get_error: GetError,
     terminate: Terminate,
+    destroy_context: Destroy,
+    destroy_surface: Destroy,
+    release_thread: ReleaseThread,
     _lib: Library,
 }
 
@@ -68,7 +73,9 @@ pub struct FbdevSurface {
     surface: Ptr,
     context: Ptr,
     size: (u32, u32),
-    _window: Box<FbdevWindow>,
+    initialized: bool,
+    touched: bool,
+    _window: Option<Box<FbdevWindow>>,
 }
 
 #[cfg(unix)]
@@ -127,6 +134,9 @@ unsafe fn sym<T: Copy>(lib: &Library, name: &str) -> Result<T, GfxError> {
 
 impl Egl {
     fn load() -> Result<Self, GfxError> {
+        #[cfg(feature = "stock-tg5040")]
+        let lib = open("/usr/lib/libEGL.so.1").or_else(|_| open("/usr/lib/libEGL.so"))?;
+        #[cfg(not(feature = "stock-tg5040"))]
         let lib = open("libEGL.so.1").or_else(|_| open("libEGL.so"))?;
         unsafe {
             Ok(Egl {
@@ -143,6 +153,9 @@ impl Egl {
                 get_proc_address: sym(&lib, "eglGetProcAddress")?,
                 get_error: sym(&lib, "eglGetError")?,
                 terminate: sym(&lib, "eglTerminate")?,
+                destroy_context: sym(&lib, "eglDestroyContext")?,
+                destroy_surface: sym(&lib, "eglDestroySurface")?,
+                release_thread: sym(&lib, "eglReleaseThread")?,
                 _lib: lib,
             })
         }
@@ -151,10 +164,22 @@ impl Egl {
     fn fail(&self, what: &str) -> GfxError {
         egl_error(what, unsafe { (self.get_error)() })
     }
+
+    fn check(&self, what: &str, ok: bool) -> Result<(), GfxError> {
+        let code = unsafe { (self.get_error)() };
+        if !ok || code != EGL_SUCCESS {
+            return Err(egl_error(what, code));
+        }
+        Ok(())
+    }
 }
 
 impl FbdevSurface {
     pub fn new() -> Result<Self, GfxError> {
+        if cfg!(feature = "stock-tg5040") {
+            // Surface dimensions are queried below; do not open fb0 for a hint.
+            return Self::open((1280, 720));
+        }
         let attr = |name: &str| std::fs::read_to_string(format!("{FB0}/{name}")).ok();
         let hint = attr("mode")
             .as_deref()
@@ -169,18 +194,35 @@ impl FbdevSurface {
 
     fn open(hint: (u32, u32)) -> Result<Self, GfxError> {
         let egl = Egl::load()?;
+        #[cfg(feature = "stock-tg5040")]
+        let gles = open("/usr/lib/libGLESv2.so.2").or_else(|_| open("/usr/lib/libGLESv2.so"))?;
+        #[cfg(not(feature = "stock-tg5040"))]
         let gles = open("libGLESv2.so.2").or_else(|_| open("libGLESv2.so"))?;
+        Self::open_with(egl, gles, hint)
+    }
+
+    fn open_with(egl: Egl, gles: Library, hint: (u32, u32)) -> Result<Self, GfxError> {
+        // Own each resource immediately, so every early return runs the same Drop.
+        let mut out = Self {
+            egl,
+            gles,
+            display: std::ptr::null_mut(),
+            surface: std::ptr::null_mut(),
+            context: std::ptr::null_mut(),
+            size: hint,
+            initialized: false,
+            touched: false,
+            _window: None,
+        };
         unsafe {
-            let display = (egl.get_display)(std::ptr::null_mut());
-            if display.is_null() {
-                return Err(egl.fail("eglGetDisplay"));
-            }
-            if (egl.initialize)(display, std::ptr::null_mut(), std::ptr::null_mut()) == 0 {
-                return Err(egl.fail("eglInitialize"));
-            }
-            if (egl.bind_api)(EGL_OPENGL_ES_API) == 0 {
-                return Err(egl.fail("eglBindAPI"));
-            }
+            out.touched = true;
+            out.display = (out.egl.get_display)(std::ptr::null_mut());
+            out.egl.check("eglGetDisplay", !out.display.is_null())?;
+            let rc = (out.egl.initialize)(out.display, std::ptr::null_mut(), std::ptr::null_mut());
+            out.initialized = rc != 0;
+            out.egl.check("eglInitialize", out.initialized)?;
+            let rc = (out.egl.bind_api)(EGL_OPENGL_ES_API);
+            out.egl.check("eglBindAPI", rc != 0)?;
             let attrs = [
                 EGL_SURFACE_TYPE,
                 EGL_WINDOW_BIT,
@@ -198,70 +240,78 @@ impl FbdevSurface {
             ];
             let mut config: Ptr = std::ptr::null_mut();
             let mut found = 0;
-            if (egl.choose_config)(display, attrs.as_ptr(), &mut config, 1, &mut found) == 0 {
-                return Err(egl.fail("eglChooseConfig"));
-            }
-            if found == 0 {
+            let rc =
+                (out.egl.choose_config)(out.display, attrs.as_ptr(), &mut config, 1, &mut found);
+            out.egl.check("eglChooseConfig", rc != 0)?;
+            if found < 1 || config.is_null() {
                 return Err(GfxError::Context(
                     "eglChooseConfig: no es2 window config with 8/8/8 colour".into(),
                 ));
             }
-            let mut window = Box::new(FbdevWindow {
-                width: hint.0 as u16,
-                height: hint.1 as u16,
-            });
-            let native = &mut *window as *mut FbdevWindow as Ptr;
-            let mut surface =
-                (egl.create_window_surface)(display, config, native, std::ptr::null());
-            if surface.is_null() {
-                surface = (egl.create_window_surface)(
-                    display,
+            // Keep the existing native-window-first order on non-stock devices.
+            if !cfg!(feature = "stock-tg5040") {
+                out._window = Some(Box::new(FbdevWindow {
+                    width: hint.0 as u16,
+                    height: hint.1 as u16,
+                }));
+            }
+            let native = out
+                ._window
+                .as_deref_mut()
+                .map_or(std::ptr::null_mut(), |window| {
+                    window as *mut FbdevWindow as Ptr
+                });
+            out.surface =
+                (out.egl.create_window_surface)(out.display, config, native, std::ptr::null());
+            let first = out
+                .egl
+                .check("eglCreateWindowSurface", !out.surface.is_null());
+            if cfg!(feature = "stock-tg5040") || !out.surface.is_null() {
+                first?;
+            } else {
+                out.surface = (out.egl.create_window_surface)(
+                    out.display,
                     config,
                     std::ptr::null_mut(),
                     std::ptr::null(),
                 );
-            }
-            if surface.is_null() {
-                return Err(egl.fail("eglCreateWindowSurface"));
+                out.egl.check(
+                    "eglCreateWindowSurface(NULL fallback)",
+                    !out.surface.is_null(),
+                )?;
             }
             let context_attrs = [EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE];
-            let context = (egl.create_context)(
-                display,
+            out.context = (out.egl.create_context)(
+                out.display,
                 config,
                 std::ptr::null_mut(),
                 context_attrs.as_ptr(),
             );
-            if context.is_null() {
-                return Err(egl.fail("eglCreateContext"));
-            }
-            if (egl.make_current)(display, surface, surface, context) == 0 {
-                return Err(egl.fail("eglMakeCurrent"));
-            }
-            (egl.swap_interval)(display, 1);
-            let size = query_size(&egl, display, surface).unwrap_or(hint);
-            Ok(FbdevSurface {
-                egl,
-                gles,
-                display,
-                surface,
-                context,
-                size,
-                _window: window,
-            })
+            out.egl.check("eglCreateContext", !out.context.is_null())?;
+            let rc = (out.egl.make_current)(out.display, out.surface, out.surface, out.context);
+            out.egl.check("eglMakeCurrent", rc != 0)?;
+            let rc = (out.egl.swap_interval)(out.display, 1);
+            out.egl.check("eglSwapInterval", rc != 0)?;
+            out.size = query_size(&out.egl, out.display, out.surface)?;
+            Ok(out)
         }
     }
 }
 
-fn query_size(egl: &Egl, display: Ptr, surface: Ptr) -> Option<(u32, u32)> {
+fn query_size(egl: &Egl, display: Ptr, surface: Ptr) -> Result<(u32, u32), GfxError> {
     let (mut w, mut h) = (0, 0);
     unsafe {
-        if (egl.query_surface)(display, surface, EGL_WIDTH, &mut w) == 0
-            || (egl.query_surface)(display, surface, EGL_HEIGHT, &mut h) == 0
-        {
-            return None;
-        }
+        let rc = (egl.query_surface)(display, surface, EGL_WIDTH, &mut w);
+        egl.check("eglQuerySurface(width)", rc != 0)?;
+        let rc = (egl.query_surface)(display, surface, EGL_HEIGHT, &mut h);
+        egl.check("eglQuerySurface(height)", rc != 0)?;
     }
-    (w > 0 && h > 0).then_some((w as u32, h as u32))
+    if w <= 0 || h <= 0 {
+        return Err(GfxError::Context(
+            "eglQuerySurface: invalid dimensions".into(),
+        ));
+    }
+    Ok((w as u32, h as u32))
 }
 
 impl Surface for FbdevSurface {
@@ -301,13 +351,232 @@ impl Surface for FbdevSurface {
 impl Drop for FbdevSurface {
     fn drop(&mut self) {
         unsafe {
-            (self.egl.make_current)(
-                self.display,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-            );
-            (self.egl.terminate)(self.display);
+            let release = |name, rc| {
+                if let Err(e) = self.egl.check(name, rc != 0) {
+                    eprintln!("slot: cleanup: {e}");
+                }
+            };
+            if self.initialized && (!self.surface.is_null() || !self.context.is_null()) {
+                release(
+                    "eglMakeCurrent(unbind)",
+                    (self.egl.make_current)(
+                        self.display,
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                    ),
+                );
+            }
+            if !self.context.is_null() {
+                release(
+                    "eglDestroyContext",
+                    (self.egl.destroy_context)(self.display, self.context),
+                );
+            }
+            if !self.surface.is_null() {
+                release(
+                    "eglDestroySurface",
+                    (self.egl.destroy_surface)(self.display, self.surface),
+                );
+            }
+            if self.initialized {
+                release("eglTerminate", (self.egl.terminate)(self.display));
+            }
+            if self.touched {
+                release("eglReleaseThread", (self.egl.release_thread)());
+            }
         }
+    }
+}
+
+#[cfg(all(test, unix, feature = "stock-tg5040"))]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    #[derive(Default)]
+    struct Driver {
+        calls: usize,
+        fail: usize,
+        error: i32,
+        initialized: bool,
+        surface: bool,
+        context: bool,
+        non_null_window: bool,
+        cleanup_failure: bool,
+        terminated: bool,
+        released: bool,
+    }
+    thread_local! { static DRIVER: RefCell<Driver> = RefCell::new(Driver::default()); }
+    fn step() -> bool {
+        DRIVER.with(|state| {
+            let mut s = state.borrow_mut();
+            s.calls += 1;
+            let ok = s.calls != s.fail;
+            s.error = if ok { EGL_SUCCESS } else { 0x3003 };
+            ok
+        })
+    }
+    fn handle(ok: bool) -> Ptr {
+        if ok {
+            1usize as Ptr
+        } else {
+            std::ptr::null_mut()
+        }
+    }
+    unsafe extern "C" fn display(_: Ptr) -> Ptr {
+        handle(step())
+    }
+    unsafe extern "C" fn initialize(_: Ptr, _: *mut i32, _: *mut i32) -> u32 {
+        let ok = step();
+        DRIVER.with(|s| s.borrow_mut().initialized = ok);
+        u32::from(ok)
+    }
+    unsafe extern "C" fn bind(_: u32) -> u32 {
+        u32::from(step())
+    }
+    unsafe extern "C" fn choose(
+        _: Ptr,
+        _: *const i32,
+        config: *mut Ptr,
+        _: i32,
+        n: *mut i32,
+    ) -> u32 {
+        let ok = step();
+        *config = handle(ok);
+        *n = i32::from(ok);
+        u32::from(ok)
+    }
+    unsafe extern "C" fn surface(_: Ptr, _: Ptr, window: Ptr, _: *const i32) -> Ptr {
+        let ok = step();
+        DRIVER.with(|s| {
+            let mut s = s.borrow_mut();
+            s.surface = ok;
+            s.non_null_window |= !window.is_null();
+        });
+        handle(ok)
+    }
+    unsafe extern "C" fn context(_: Ptr, _: Ptr, _: Ptr, _: *const i32) -> Ptr {
+        let ok = step();
+        DRIVER.with(|s| s.borrow_mut().context = ok);
+        handle(ok)
+    }
+    unsafe extern "C" fn current(_: Ptr, _: Ptr, _: Ptr, _: Ptr) -> u32 {
+        u32::from(step())
+    }
+    unsafe extern "C" fn query(_: Ptr, _: Ptr, attr: i32, value: *mut i32) -> u32 {
+        let ok = step();
+        *value = if attr == EGL_WIDTH { 1280 } else { 720 };
+        u32::from(ok)
+    }
+    unsafe extern "C" fn swap(_: Ptr, _: Ptr) -> u32 {
+        u32::from(step())
+    }
+    unsafe extern "C" fn interval(_: Ptr, _: i32) -> u32 {
+        u32::from(step())
+    }
+    unsafe extern "C" fn proc(_: *const c_char) -> *const c_void {
+        std::ptr::null()
+    }
+    unsafe extern "C" fn error() -> i32 {
+        DRIVER.with(|s| {
+            let mut s = s.borrow_mut();
+            let e = s.error;
+            s.error = EGL_SUCCESS;
+            e
+        })
+    }
+    unsafe extern "C" fn destroy_context(_: Ptr, _: Ptr) -> u32 {
+        let ok = step() && !DRIVER.with(|s| s.borrow().cleanup_failure);
+        DRIVER.with(|s| s.borrow_mut().context = !ok);
+        u32::from(ok)
+    }
+    unsafe extern "C" fn destroy_surface(_: Ptr, _: Ptr) -> u32 {
+        let ok = step();
+        DRIVER.with(|s| s.borrow_mut().surface = !ok);
+        u32::from(ok)
+    }
+    unsafe extern "C" fn terminate(_: Ptr) -> u32 {
+        let ok = step();
+        DRIVER.with(|s| {
+            let mut s = s.borrow_mut();
+            s.initialized = !ok;
+            s.terminated = true;
+        });
+        u32::from(ok)
+    }
+    unsafe extern "C" fn release() -> u32 {
+        let ok = step();
+        DRIVER.with(|s| s.borrow_mut().released = true);
+        u32::from(ok)
+    }
+    fn mock() -> Egl {
+        Egl {
+            get_display: display,
+            initialize,
+            bind_api: bind,
+            choose_config: choose,
+            create_window_surface: surface,
+            create_context: context,
+            make_current: current,
+            query_surface: query,
+            swap_buffers: swap,
+            swap_interval: interval,
+            get_proc_address: proc,
+            get_error: error,
+            terminate,
+            destroy_context,
+            destroy_surface,
+            release_thread: release,
+            _lib: libloading::os::unix::Library::this().into(),
+        }
+    }
+
+    #[test]
+    fn stock_null_window_and_cleanup_on_each_initialization_failure() {
+        // Ten fallible initialization calls, including both surface dimensions.
+        for fail in 0..=10 {
+            DRIVER.with(|s| {
+                *s.borrow_mut() = Driver {
+                    fail,
+                    ..Default::default()
+                }
+            });
+            let result = FbdevSurface::open_with(
+                mock(),
+                libloading::os::unix::Library::this().into(),
+                (1, 1),
+            );
+            if fail == 0 {
+                assert_eq!(result.as_ref().unwrap().window_size(), (1280, 720));
+            } else {
+                assert!(result.is_err(), "failure {fail} must be propagated");
+            }
+            drop(result);
+            DRIVER.with(|s| {
+                let s = s.borrow();
+                assert!(
+                    !s.initialized && !s.context && !s.surface,
+                    "failure {fail} leaked owned resources"
+                );
+                assert!(!s.non_null_window);
+                assert!(s.released);
+            });
+        }
+        DRIVER.with(|s| {
+            *s.borrow_mut() = Driver {
+                cleanup_failure: true,
+                ..Default::default()
+            }
+        });
+        drop(
+            FbdevSurface::open_with(mock(), libloading::os::unix::Library::this().into(), (1, 1))
+                .unwrap(),
+        );
+        DRIVER.with(|s| {
+            let s = s.borrow();
+            assert!(s.context); // Destroy failure is not reported as successful release.
+            assert!(!s.surface && s.terminated && s.released);
+        });
     }
 }

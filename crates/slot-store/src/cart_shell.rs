@@ -120,7 +120,7 @@ pub fn write_choice(
     };
     let out = crate::ini::set(&text, &want, value.as_deref())?;
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
+        crate::fs::create_dir_all(dir)?;
     }
     crate::atomic::atomic_write(&path, out.as_bytes())
 }

@@ -543,7 +543,9 @@ pub struct App {
     starting: Option<LinkStarting>,
     link_transport: Option<(u16, Box<dyn LinkChannel>)>,
     restarting: bool,
+    restart_requested: bool,
     relaunching: bool,
+    stock_power_owned: bool,
     repairing: bool,
     repair_prompt: bool,
     reset_prompt: Option<QuickRow>,
@@ -978,7 +980,9 @@ impl App {
             starting: None,
             link_transport: None,
             restarting: false,
+            restart_requested: false,
             relaunching: false,
+            stock_power_owned: false,
             repairing: false,
             repair_prompt: false,
             reset_prompt: None,
@@ -2118,7 +2122,10 @@ impl App {
         if self.wifi_probe.is_some() {
             hidden.extend([QuickRow::Network, QuickRow::Wifi]);
         }
-        if self.state.wifi_off {
+        if self.wifi().scan_only || self.wifi().stock_owned {
+            hidden.push(QuickRow::WifiPower);
+        }
+        if self.wifi_is_off() {
             hidden.push(QuickRow::Networks);
         }
         if !cfg!(feature = "romm") {
@@ -3039,6 +3046,11 @@ impl App {
         self.sfx.take()
     }
 
+    /// Stock services, not Slot gestures or doze timers, own system power.
+    pub fn set_stock_power_owned(&mut self) {
+        self.stock_power_owned = true;
+    }
+
     pub fn set_power(&mut self, mut power: Power) {
         power.set_backlight(self.state.brightness + 1);
         self.headphones = power.headphones();
@@ -3226,7 +3238,7 @@ impl App {
     }
 
     pub fn ready_to_restart(&self) -> bool {
-        self.restarting && self.now() >= self.act_at
+        self.restarting && !self.restart_requested && self.now() >= self.act_at
     }
 
     pub fn shutting_down(&self) -> bool {
@@ -3241,10 +3253,29 @@ impl App {
         self.relaunching
     }
 
-    pub fn restart(&mut self) {
+    pub fn restart(&mut self) -> bool {
+        if self.restart_requested {
+            return true;
+        }
+        self.flush_resume();
         self.settle_saves();
-        if let Some(power) = &mut self.power {
-            power.restart();
+        let result = self
+            .power
+            .as_mut()
+            .ok_or_else(|| "no platform reboot handler".to_string())
+            .and_then(Power::request_restart);
+        match result {
+            Ok(()) => {
+                self.restart_requested = true;
+                eprintln!("slot: reboot requested from init; awaiting system shutdown");
+                true
+            }
+            Err(error) => {
+                eprintln!("slot: reboot failed: {error}");
+                self.restarting = false;
+                self.hud.toast(Toast::RestartFailed, self.now());
+                false
+            }
         }
     }
 
@@ -3409,6 +3440,18 @@ impl App {
 
     pub fn apply(&mut self, action: Action) {
         self.track_held_dir(action);
+        if self.stock_power_owned {
+            match action {
+                Action::PowerPress => {
+                    eprintln!(
+                        "slot: stock Power press; checkpoint only, system power is stock-owned"
+                    );
+                    return self.flush_resume();
+                }
+                Action::PowerTap | Action::PowerHold | Action::PowerOff => return,
+                _ => {}
+            }
+        }
         match action {
             Action::LidClose => return self.doze(),
             Action::LidOpen => return self.wake(),
@@ -5304,7 +5347,7 @@ impl App {
                 slot_ui::draw_menu_ground(self.canvas(), self.menu_ground(), out);
                 draw_sticker(self.canvas(), self.sticker_face, out);
                 self.draw_menu_footer(out);
-                return;
+                return self.hud.draw(self.canvas(), self.now(), out);
             }
             Phase::Networks { .. } | Phase::NetworkScan { .. } | Phase::NetworkPage { .. } => {
                 self.draw_networks(out);
@@ -6343,7 +6386,7 @@ impl App {
     }
 
     pub fn on_doze_timeout(&mut self) {
-        if !matches!(self.phase, Phase::Doze { .. }) {
+        if self.stock_power_owned || !matches!(self.phase, Phase::Doze { .. }) {
             return;
         }
         self.begin_power_off();
@@ -6366,6 +6409,11 @@ impl App {
 
     fn begin_repair(&mut self) {
         self.repair_prompt = false;
+        if self.stock_power_owned {
+            eprintln!("slot: repair unavailable in stock mode; saving and exiting Slot only");
+            self.relaunching = true;
+            return;
+        }
         if self.shutting_down() {
             return;
         }
@@ -6375,7 +6423,9 @@ impl App {
     }
 
     fn begin_restart(&mut self) {
-        self.release_radio();
+        if !self.stock_power_owned {
+            self.release_radio();
+        }
         if self.shutting_down() {
             return;
         }
@@ -6645,7 +6695,7 @@ impl App {
     pub fn release_radio(&mut self) {
         self.wifi_wanted_at = None;
         if std::mem::take(&mut self.wifi_held) {
-            self.wifi_send(if self.state.wifi_off {
+            self.wifi_send(if self.wifi_is_off() {
                 crate::wifi::Cmd::PowerOff
             } else {
                 crate::wifi::Cmd::Release
@@ -6673,7 +6723,7 @@ impl App {
         ) && self.seated_cart().is_none()
             && !self.link_active()
             && !self.shutting_down()
-            && !self.state.wifi_off
+            && !self.wifi_is_off()
             && (self.has_saved()
                 || matches!(
                     self.phase,
@@ -6686,11 +6736,11 @@ impl App {
     }
 
     pub fn wifi_is_off(&self) -> bool {
-        self.state.wifi_off
+        self.state.wifi_off && !self.wifi().scan_only && !self.wifi().stock_owned
     }
 
     pub fn set_wifi_off(&mut self, off: bool) {
-        if self.state.wifi_off == off {
+        if self.wifi().scan_only || self.wifi().stock_owned || self.state.wifi_off == off {
             return;
         }
         self.state.wifi_off = off;
@@ -6744,7 +6794,7 @@ impl App {
         self.probe_wifi();
         let scan = matches!(self.phase, Phase::NetworkScan { .. })
             && self.keyboard.is_none()
-            && !self.state.wifi_off;
+            && !self.wifi_is_off();
         if scan != self.wifi_scanning {
             self.wifi_scanning = scan;
             if let Some((w, _, _)) = &mut self.wifi {
@@ -6752,7 +6802,7 @@ impl App {
             }
         }
         self.poll_wifi();
-        if self.state.wifi_off
+        if self.wifi_is_off()
             && !self.wifi_boot_blocked
             && self.wifi.is_some()
             && matches!(self.phase, Phase::Shelf)
@@ -7616,7 +7666,7 @@ impl App {
                     None => crate::art::make::apply_label(&root, &studio.cart, None),
                 };
                 self.set_cart_label(platform, &stem, path.is_file().then_some(path));
-                let _ = std::fs::remove_dir_all(root.join(crate::art::make::STUDIO_CACHE));
+                let _ = slot_store::fs::remove_dir_all(root.join(crate::art::make::STUDIO_CACHE));
             } else if studio.recolored() {
                 self.art_pending += 1;
                 self.studio_saving = Some(stem.clone());
@@ -7626,7 +7676,7 @@ impl App {
                     look: self.studio_art.as_ref().and_then(|a| a.look.clone()),
                 });
             } else {
-                let _ = std::fs::remove_dir_all(root.join(crate::art::make::STUDIO_CACHE));
+                let _ = slot_store::fs::remove_dir_all(root.join(crate::art::make::STUDIO_CACHE));
             }
         }
         if studio.shell != studio.cart.shell {
@@ -8632,7 +8682,7 @@ impl App {
     }
 
     fn net_rows(&self) -> Vec<crate::networks::NetRow> {
-        crate::networks::list_rows(self.wifi(), self.state.wifi_off)
+        crate::networks::list_rows(self.wifi(), self.wifi_is_off())
     }
 
     fn open_networks(&mut self) {
@@ -8643,7 +8693,7 @@ impl App {
                 crate::networks::NetPick::Name,
             ),
         };
-        if !self.state.wifi_off {
+        if !self.wifi_is_off() {
             self.hold_wifi();
         }
     }
@@ -8709,6 +8759,9 @@ impl App {
 
     fn pick_network(&mut self, row: crate::networks::NetRow) {
         use crate::networks::{NetPick, NetRow, NAME_TITLE, PASSWORD_TITLE};
+        if self.wifi().scan_only && !matches!(row, NetRow::Scan) {
+            return;
+        }
         match row {
             NetRow::Scan => {
                 self.wifi_send(crate::wifi::Cmd::ClearScan);
@@ -9255,14 +9308,20 @@ impl App {
             list_line, list_message, list_rows, page_line, page_rows, scan_message, scan_rows,
             selected, NetScreen,
         };
-        let (snap, off) = (self.wifi(), self.state.wifi_off);
+        let (snap, off) = (self.wifi(), self.wifi_is_off());
         match &self.phase {
             Phase::Networks { pick } => {
                 let rows = list_rows(snap, off);
                 Some(NetScreen {
                     selected: selected(&rows, pick),
                     lines: rows.iter().map(|r| list_line(r, snap)).collect(),
-                    message: list_message(off),
+                    message: if snap.scan_only {
+                        Some(crate::networks::STOCK_SCAN_MESSAGE)
+                    } else if snap.stock_owned {
+                        Some(crate::networks::STOCK_CONNECT_MESSAGE)
+                    } else {
+                        list_message(off)
+                    },
                 })
             }
             Phase::NetworkScan { pick } => {
@@ -9290,7 +9349,15 @@ impl App {
 
     pub fn network_action(&self) -> Option<&'static str> {
         use crate::networks::{list_rows, page_rows, scan_rows, selected, NetRow, PageRow};
-        let (snap, off) = (self.wifi(), self.state.wifi_off);
+        let (snap, off) = (self.wifi(), self.wifi_is_off());
+        if snap.scan_only
+            && matches!(
+                self.phase,
+                Phase::NetworkScan { .. } | Phase::NetworkPage { .. }
+            )
+        {
+            return None;
+        }
         let pick_action = |row: &NetRow| match row {
             NetRow::Saved(_) => "Open",
             NetRow::Nearby(_) | NetRow::Other => "Join",
@@ -9418,7 +9485,10 @@ impl App {
     }
 
     pub fn networks_value(&self) -> String {
-        if self.state.wifi_off {
+        if self.wifi().scan_only {
+            return "Scan only".into();
+        }
+        if self.wifi_is_off() {
             return "Off".into();
         }
         match &self.wifi().status.ssid {
@@ -10249,6 +10319,11 @@ impl App {
     }
 
     fn begin_power_off(&mut self) {
+        if self.stock_power_owned {
+            eprintln!("slot: stock power request; saving and exiting Slot, not powering down");
+            self.relaunching = true;
+            return;
+        }
         self.abandon_server();
         self.close_studio();
         self.release_radio();
@@ -10278,7 +10353,7 @@ impl App {
     }
 
     fn doze_expired(&self) -> bool {
-        if self.link_active() {
+        if self.stock_power_owned || self.link_active() {
             return false;
         }
         let (Phase::Doze { .. }, Some(power)) = (&self.phase, &self.power) else {

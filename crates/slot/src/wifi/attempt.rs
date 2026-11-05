@@ -9,6 +9,8 @@ pub enum Failure {
     WrongPassword,
     NotFound,
     NoIp,
+    Unsupported,
+    SaveUnconfirmed,
     Other,
 }
 
@@ -18,6 +20,8 @@ impl Failure {
             Failure::WrongPassword => "Wrong Password",
             Failure::NotFound => "Not Found",
             Failure::NoIp => "No IP Address",
+            Failure::Unsupported => "Unsupported Security",
+            Failure::SaveUnconfirmed => "Connected; Save Unconfirmed",
             Failure::Other => "Could Not Connect",
         }
     }
