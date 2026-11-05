@@ -1,92 +1,57 @@
-<div align="center">
+# slot
 
-<img src=".github/resources/banner.png" width="100%" alt="slot. A bespoke, Game Boy-centric frontend for the Anbernic RG SP.">
+**Goal.** Run [Slot](https://github.com/BrandonKowalski/slot) on TrimUI Stock OS.
 
-<a href="LICENSE"><img src="https://img.shields.io/github/license/BrandonKowalski/slot?style=for-the-badge&labelColor=242429&color=4d4d57" height="36" alt="License"></a>
-<a href="https://github.com/BrandonKowalski/slot/stargazers"><img src="https://img.shields.io/github/stars/BrandonKowalski/slot?style=for-the-badge&labelColor=242429&color=4d4d57" height="36" alt="Stars"></a>
-<a href="https://github.com/BrandonKowalski/slot/releases"><img src="https://img.shields.io/github/downloads/BrandonKowalski/slot/total?style=for-the-badge&labelColor=242429&color=4d4d57" height="36" alt="Downloads"></a>
-<a href="https://slot-cfw.fyi"><img src="https://img.shields.io/badge/Guide-slot--cfw.fyi-4d4d57?style=for-the-badge&labelColor=242429" height="36" alt="Docs"></a>
-<a href="https://discord.gg/NYRWsSuPUu"><img src="https://img.shields.io/badge/Discord-4d4d57?style=for-the-badge&labelColor=242429&logo=discord&logoColor=white" height="36" alt="Discord"></a>
+Stock OS is the factory system on TrimUI handhelds. Under that UI, the system is Tina Linux. This fork is [jellydn/slot-tsp](https://github.com/jellydn/slot-tsp). Slot is the cartridge shelf. Upstream Slot targets Anbernic H700 devices on BaseOS. The Game Boy guide stays at [slot-cfw.fyi](https://slot-cfw.fyi).
 
-</div>
+## Host
 
----
+| Item | Value |
+| --- | --- |
+| Devices | TrimUI handhelds that ship Stock OS |
+| System | Tina Linux |
+| UI | TrimUI Stock |
+| App folder | `/SDCARD/Apps/Slot/` |
+| Launch files | `launch.sh`, `config.json` |
+| Firmware | [trimui](https://github.com/trimui) firmware repositories |
 
-# What is slot?
+On a 1280 × 720 panel, the shelf fills the screen. A game stays 3:2, with black bars on the left and right.
 
-A bespoke, Game Boy-centric frontend for the Anbernic RG SP.
+This build does not ship the Stock OS app folder yet.
 
-Has support for GBA, GBC, and GB titles only.
+## Knulli Port
 
-> [!IMPORTANT]
-> ROMs must be unzipped. slot does not read `.zip` or `.7z` files.
+Slot also runs as a Port on Knulli. The TrimUI Smart Pro build is [knulli-tsp-0.1.0](https://github.com/jellydn/slot-tsp/releases/tag/knulli-tsp-0.1.0).
 
-A full user guide can be found at [slot-cfw.fyi](https://slot-cfw.fyi).
+1. Download [slot-knulli-tsp-0.1.0.zip](https://github.com/jellydn/slot-tsp/releases/download/knulli-tsp-0.1.0/slot-knulli-tsp-0.1.0.zip).
+2. Unzip it into `/userdata/roms/ports/Slot`.
+3. Confirm `Slot.sh` is at `/userdata/roms/ports/Slot/Slot.sh`.
+4. Refresh Ports in EmulationStation.
+5. Launch Slot from Ports.
 
----
+`Slot.sh` stops EmulationStation, sets `SLOT_ROOT` to the port folder, and runs `System/slot`. On exit it starts EmulationStation again. The launcher source is [knulli/Slot.sh](knulli/Slot.sh). Port work continues in [issue 1](https://github.com/jellydn/slot-tsp/issues/1).
 
-# What does it look like?
+## Games in this build
 
-<p align="center">
-<img src=".github/resources/screenshots/carousel.gif" width="48%" alt="Scrolling the cart carousel across the Game Boy Advance, Game Boy and Game Boy Color shelves">
-<img src=".github/resources/screenshots/core-picker.gif" width="48%" alt="Flipping a cart to its circuit board to choose mGBA or gpSP">
-</p>
+ROMs must be unzipped. Slot does not read `.zip` or `.7z` files.
 
-<p align="center">
-<img src=".github/resources/screenshots/link.gif" width="96.5%" alt="Two SPs racing in Mario Kart over the emulated link">
-</p>
+| System | Folder | Cores |
+| --- | --- | --- |
+| Game Boy | `Games/GB` | Gambatte, mGBA |
+| Game Boy Color | `Games/GBC` | Gambatte, mGBA |
+| Game Boy Advance | `Games/GBA` | mGBA, gpSP |
 
----
+## Planned systems
 
-# Supported Devices
+These systems are the next goal after Slot runs on Stock OS. Track them in [issue 2](https://github.com/jellydn/slot-tsp/issues/2). This build does not run them.
 
-| Device             | Supported                                    | Since Version |
-|--------------------|----------------------------------------------|---------------|
-| Anbernic RG SP     | Yes                                          | Always        |
-| Anbernic RG34XX    | Yes                                          | 1.4.0         |
-| Anbernic RG34XXSP  | Yes                                          | 1.4.0         |
-| Anbernic RG35XXSP  | Yes                                          | 1.5.0         |
-| Anbernic 35XX Plus | Yes                                          | 1.5.0         |
-| Anbernic RG28XX    | Yes                                          | 1.6.0         |
-| Anbernic RG35XX-H  | Yes                                          | 1.7.0         |
-
-If you have one of the untested devices, or have tried slot on a device not listed,
-please [open an issue on GitHub](https://github.com/BrandonKowalski/slot/issues) and let me know how it went.
-
----
-
-# Discord Community
-
-slot has a [Discord server](https://discord.gg/NYRWsSuPUu) for questions, sharing setups, and talking about the project.
-
-It is open to everyone in the slot universe. That includes folks running or building forks of slot.
-
-There is no reason for this community to be fragmented so long as we are having fun!
-
----
-
-# AI Disclosure
-
-The Rust frontend, and the SVGs on [slot-cfw.fyi](https://slot-cfw.fyi), were put together by Claude.
-I reviewed everything that was produced. All documentation is 100% free-range, meatbag prose.
-
-My goal with this project was to recreate the feeling of playing my GBA SP in the back seat as a kid,
-but with a few modern creature comforts.
-
-Nothing about this project is exciting or groundbreaking from a technological perspective, and as a
-result, I delegated the glue code. mGBA and gpSP have been around forever and are the true stars of
-this show. The incredible skeuomorphic art is the work of [Markus](https://github.com/MarkusMaribu), an
-artist who saw the bare-bones version and offered to dress it up.
-
-I understand if my use of AI is a dealbreaker for you. Just know it's the least interesting part of
-what's here.
-
-Figured I should share the end result of all the wasted water. ✌🏻
-
----
-
-# Spread Joy!
-
-I've spent a lot of time building slot.
-
-If you enjoy using it and feel inclined to pay it forward, go do something nice for someone! ❤️
+| System | Reference fork |
+| --- | --- |
+| PICO-8 | [unslot](https://github.com/cloudwithax/unslot) (Retro8) |
+| Neo Geo | unslot (FinalBurn Neo) |
+| Mega Drive | unslot (Genesis Plus GX) |
+| Arcade, FBNeo, MAME | unslot (one arcade path) |
+| PlayStation | unslot, [Fragile](https://github.com/fragilesilver/slot-fragile), [slot.ps1](https://github.com/gmaster1998/slot.ps1) (PCSX ReARMed) |
+| Nintendo 64 | unslot (ParaLLEl N64) |
+| Nintendo DS | [slotPlus](https://github.com/nelynes/slotPlus) Ultra and Fragile (DSperate) |
+| Dreamcast | unslot (Nodosumi, then Flycast) |
