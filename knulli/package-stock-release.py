@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package the frozen owner-tested runtime. Never opens a device or SD volume."""
+"""Package frozen host-verified 0.2.0 runtime. Never opens a device or SD volume."""
 
 import argparse
 import gzip
@@ -11,9 +11,11 @@ import tarfile
 import zipfile
 from pathlib import Path
 
-VERSION = "stock-tsp-0.1.0"
+VERSION = "stock-tsp-0.2.0"
 TESTED_ZIP = "953cc4271f22061e6957f8ab3e1efedfa890f4599ee5183d4848f4ca0f11fba8"
 TESTED_BINARY = "56539682478c77d33351890b6efcb7a9fb0660ea253a7f8880122591cbfbb7fa"
+HOST_ZIP = "e9d65399eb809aca33aefda87c1e5a31b831bc3db9c587ad431302703df1d7a1"
+HOST_BINARY = "5bde5434a78c6923a61842753c8f20b7682dcd8c24a645dffdbd710fc59cc4ac"
 
 
 def sha(path):
@@ -52,19 +54,24 @@ def source_archive(source, target):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--candidate", type=Path, required=True)
+    parser.add_argument("--runtime-candidate", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     candidate, out = args.candidate.resolve(), args.out.resolve()
+    runtime = args.runtime_candidate.resolve()
     repo = Path(__file__).resolve().parents[1]
     assert not out.exists(), "refuse overwriting release output"
-    assert sha(candidate.with_suffix(".zip")) == TESTED_ZIP
     base = candidate / "proposed/payload"
+    host = runtime / "proposed/payload"
     assert sha(base / "Slot/System/slot") == TESTED_BINARY
-    with zipfile.ZipFile(candidate.with_suffix(".zip")) as z:
-        assert z.testzip() is None
-        for member in z.infolist():
-            assert not member.is_dir() and ".." not in Path(member.filename).parts
-            assert z.read(member) == (candidate / member.filename).read_bytes()
+    assert sha(host / "Slot/System/slot") == HOST_BINARY
+    for frozen, expected in [(candidate, TESTED_ZIP), (runtime, HOST_ZIP)]:
+        assert sha(frozen.with_suffix(".zip")) == expected
+        with zipfile.ZipFile(frozen.with_suffix(".zip")) as z:
+            assert z.testzip() is None
+            for member in z.infolist():
+                assert not member.is_dir() and ".." not in Path(member.filename).parts
+                assert z.read(member) == (frozen / member.filename).read_bytes()
     commit = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=repo, text=True
     ).strip()
@@ -73,7 +80,7 @@ def main():
             "git",
             "diff",
             "--name-only",
-            "21ec10351043c260c60e18846cf2091eebb0752f",
+            "0f486802b4283a0ca831a053445ae1e7cffa88f8",
             "HEAD",
         ],
         cwd=repo,
@@ -85,6 +92,7 @@ def main():
     # Explicit allowlist: never copy private verification logs, Config/Games,
     # old candidate warnings, Grout or internal firmware payloads.
     shutil.copytree(base / "Slot/System", tree / "Slot/System")
+    shutil.copyfile(host / "Slot/System/slot", tree / "Slot/System/slot")
     shutil.copytree(base / "Apps/SlotStockTest", tree / "Apps/SlotStockTest")
     shutil.copytree(candidate / "proposed/trimui", tree / "trimui")
     app_config = tree / "Apps/SlotStockTest/config.json"
@@ -96,7 +104,7 @@ def main():
     frontend_provenance = tree / "trimui/PROVENANCE.json"
     metadata = json.loads(frontend_provenance.read_text())
     metadata["historical_preparation_status"] = metadata["status"]
-    metadata["status"] = "STOCK_TSP_0_1_0_RELEASE_RUNTIME_PINS_UNCHANGED"
+    metadata["status"] = "STOCK_TSP_0_2_0_ADAPTER_PINS_UNCHANGED_HARDWARE_PENDING"
     write(frontend_provenance, metadata)
     (tree / "System/starts").mkdir(parents=True)
     shutil.copyfile(repo / "knulli/stock-start.sh", tree / "System/starts/slot.sh")
@@ -108,15 +116,17 @@ def main():
     shutil.copytree(base / "Slot/Sources/cores", sources / "cores")
     shutil.copyfile(repo / "README.md", tree / "Slot/README.md")
     shutil.copyfile(
-        repo / "knulli/RELEASE-STOCK-0.1.0.md", tree / "Slot/RELEASE-NOTES.md"
+        repo / "knulli/RELEASE-STOCK-0.2.0.md", tree / "Slot/RELEASE-NOTES.md"
     )
     shutil.copyfile(repo / "LICENSE", tree / "Slot/LICENSE")
-    tested_source = base / "Slot/Sources/stock-tg5040-source.tar.gz"
-    source_asset = out / "slot-tsp-stock-0.1.0-source.tar.gz"
+    tested_source = host / "Slot/Sources/stock-tg5040-source.tar.gz"
+    source_asset = out / "slot-tsp-stock-0.2.0-source.tar.gz"
     omitted[source_asset.name] = source_archive(tested_source, source_asset)
     changed = []
     with tarfile.open(tested_source) as t:
         for m in t:
+            if m.isdir():
+                continue
             assert (
                 m.isfile()
                 and m.name.startswith("source/")
@@ -128,9 +138,7 @@ def main():
     # Integration must not silently alter anything used to build tested runtime.
     assert set(changed) <= {
         "README.md",
-        "knulli/README.md",
-        "crates/slot/tests/app.rs",
-        "crates/slot/tests/render_quick_menu.rs",
+        "knulli/package-stock-release.py",
     }, changed
     for p in sorted(tree.rglob("*")):
         assert not p.is_symlink(), str(p)
@@ -163,10 +171,11 @@ def main():
             }, relative
     for p in (tree / "Slot/System").rglob("*"):
         if p.is_file():
+            reference = host if p.name == "slot" else base
             assert (
                 p.read_bytes()
                 == (
-                    base / "Slot/System" / p.relative_to(tree / "Slot/System")
+                    reference / "Slot/System" / p.relative_to(tree / "Slot/System")
                 ).read_bytes()
             )
     for p in (tree / "trimui").rglob("*"):
@@ -185,24 +194,30 @@ def main():
     provenance = {
         "release": VERSION,
         "source_commit": commit,
-        "tested_candidate_zip_sha256": TESTED_ZIP,
-        "tested_executable_sha256": TESTED_BINARY,
-        "tested_source_archive_sha256": sha(tested_source),
+        "runtime_source_commit": "0f486802b4283a0ca831a053445ae1e7cffa88f8",
+        "baseline_candidate_zip_sha256": TESTED_ZIP,
+        "baseline_owner_tested_executable_sha256": TESTED_BINARY,
+        "host_candidate_zip_sha256": HOST_ZIP,
+        "host_verified_executable_sha256": HOST_BINARY,
+        "host_source_archive_sha256": sha(tested_source),
         "corresponding_source_asset": source_asset.name,
         "corresponding_source_sha256": sha(source_asset),
         "omitted_compiled_test_fixtures": omitted,
         "source_download": f"https://github.com/jellydn/slot-tsp/releases/download/{VERSION}/{source_asset.name}",
-        "runtime_rebuilt": False,
-        "runtime_bytes_unchanged": True,
+        "runtime_rebuilt_from_0_1_0": True,
+        "runtime_rebuilt_for_publication": False,
+        "runtime_bytes_unchanged_from_host_candidate": True,
+        "internal_build_label": "0.2.0-rc.1-stock-wake-candidate",
+        "hardware_acceptance": "PENDING: not the owner-tested 0.1.0 executable",
         "release_metadata_changes": [
             "Apps/SlotStockTest/config.json description",
             "trimui/PROVENANCE.json release status",
             "Slot documentation and manifests",
         ],
         "integration_differences_from_tested_archive": changed,
-        "release_commit_changed_paths_from_remote_docs_baseline": runtime_changes,
-        "owner_evidence": "Wi-Fi good now; earlier direct/cold boot, A/B, scan, Tools, real Restart/Shutdown, selected SD splash. Current A-select UI host-tested, not a separate power hardware pass.",
-        "limits": "Internet/persistence/repeated cold/reconnect reliability unverified. Real sleep/wake unresolved; LED controls unavailable, Fn unwired; physical LEDs/internal artwork unchanged.",
+        "release_commit_changed_paths_from_runtime_source": runtime_changes,
+        "owner_evidence": "Historical 0.1.0 Wi-Fi/power/boot/splash reports do not establish hardware acceptance of this rebuilt combined binary.",
+        "limits": "Combined RomM and Wi-Fi wake fix host-verified only. Internet/persistence/repeated reconnect/wake reliability unverified. Real sleep/wake unresolved; LED controls unavailable, Fn unwired; physical LEDs/internal artwork unchanged. SD deployment blocked by baseline conflict.",
         "source_fixture_notice": "Original exact tested archives retained locally. Public corresponding sources omit compiled test ROMs but retain their sources. No ROM or BIOS is installed by the FAT32 ZIP.",
     }
     write(tree / "Slot/BUILD-INFO.json", provenance)
@@ -221,7 +236,7 @@ def main():
         + sha(tree / "MANIFEST.json")
         + "  MANIFEST.json\n"
     )
-    archive = out / "slot-tsp-stock-0.1.0-fat32.zip"
+    archive = out / "slot-tsp-stock-0.2.0-fat32.zip"
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as z:
         for p in sorted(tree.rglob("*")):
             if p.is_file():

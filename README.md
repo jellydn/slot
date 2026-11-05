@@ -6,14 +6,15 @@ Install stock packages by **copying content to an existing FAT32 card**, not fla
 
 ## Verified status — 5 November 2026
 
-First stable stock package: **[stock-tsp-0.1.0](https://github.com/jellydn/slot-tsp/releases/tag/stock-tsp-0.1.0)** for stock firmware **1.1.1, UI 20251128, kernel 4.9.191**. Download `slot-tsp-stock-0.1.0-fat32.zip` and `SHA256SUMS`. Read the [release notes](knulli/RELEASE-STOCK-0.1.0.md) before installing. “Stable” identifies this release channel, not acceptance of every device function.
+Stable stock package: **[stock-tsp-0.2.0](https://github.com/jellydn/slot-tsp/releases/tag/stock-tsp-0.2.0)** for stock firmware **1.1.1, UI 20251128, kernel 4.9.191**. Download `slot-tsp-stock-0.2.0-fat32.zip` and `SHA256SUMS`. Read the [release notes](knulli/RELEASE-STOCK-0.2.0.md) before installing. This combines built-in RomM and the Wi-Fi wake stale-busy correction. **The rebuilt combined executable is host-verified; hardware acceptance is pending.** “Stable” identifies the release channel, not a hardware pass. The earlier [0.1.0 release](https://github.com/jellydn/slot-tsp/releases/tag/stock-tsp-0.1.0) remains available.
 
 | Evidence level | Status |
 | --- | --- |
-| Owner-confirmed | Direct boot, corrected A/B, scan, Tools, real Restart/Shutdown and selected SD splash. Latest first-connect correction: owner reports “Wifi good now.” Not a pass for every function, game or core. |
+| Historical owner evidence — 0.1.0 | Direct boot, corrected A/B, scan, Tools, real Restart/Shutdown and selected SD splash; first-connect report “Wifi good now.” Physical Power off/on later exposed a stale Network In Use error. These reports do not establish acceptance of the new 0.2.0 executable. |
+| Combined 0.2.0 | 616 pinned Linux test executions, startup mocks, ARM64 build/ABI and 229 clean host integration tests passed. No handheld acceptance of combined RomM or Wi-Fi wake correction yet. Full-suite exceptions are disclosed in the release notes. |
 | Host-checked baseline | Mount/write boundaries, input/panel mapping, EGL cleanup, dispatcher/fallback and native power paths. Not proof of hardware gameplay, save durability or suspend/resume. |
 | Included controls | **Device → Restart / Shutdown: select a row, A activates, B returns.** X/Y do not activate power actions. Save/flush/settle and visible failure handling remain in place. Real power actions passed on the earlier build; the current A-select mapping is host-tested, not a separate new hardware pass. |
-| Wi-Fi scope | Explicit Connect owns one bounded wlan0 DHCP client after association; Disconnect preserves profiles. Competing clients/unmanaged state fail closed with Network In Use. No Internet, repeated cold-boot/reconnect reliability or persistence claim. |
+| Wi-Fi scope | Explicit Connect owns one bounded wlan0 DHCP client after association; Disconnect preserves profiles. Competing clients still block takeover. After stock takes over, fresh association plus valid IPv4 can clear only the stale busy indicator without adopting its client. No Internet, repeated cold-boot/reconnect/wake reliability or persistence claim. |
 | Unresolved | Physical LED-off, Fn and real sleep/wake (white/gray failure). Early internal artwork/LED flash can remain before the SD splash. |
 
 LED controls and stock **Lid Power Off** show **Unavailable**. Slot Fn actions are disabled; physical lights and stock Fn policy are not changed. The TG5040 has no lid; no inactivity timer is added.
@@ -24,7 +25,7 @@ Details: [stock notes](knulli/STOCK-TG5040.md) and [frontend design](knulli/stoc
 
 ## Stock install and card layout
 
-Use the stock FAT32 ZIP above. It retains the exact owner-tested executable, cores and startup adapters; release packaging/documentation and source integration are disclosed separately. **Do not use the Knulli ZIP or a BaseOS/unslot image for stock installation.** No firmware, internal boot-logo writer, ROM, BIOS, personal settings/logs or Grout runtime is bundled.
+Use the stock FAT32 ZIP above. It contains the exact host-verified combined executable with unchanged baseline cores and startup adapters. It is not the owner-tested 0.1.0 binary. Build labels, hashes, source integration and pending hardware acceptance are disclosed in provenance. **Do not use the Knulli ZIP or a BaseOS/unslot image for stock installation.** No firmware, internal boot-logo writer, ROM, BIOS, personal settings/logs, pairing credentials or Grout runtime is bundled.
 
 1. Power off normally. Back up the intended FAT32 card; no format is needed.
 2. Verify `SHA256SUMS`, extract the ZIP on the host, then copy its `Slot`, `Apps`, `System` and `trimui` directories to the card root. Do not copy an enclosing ZIP-name folder. Preserve games, BIOS, saves, states, settings and splash. Back up and review an existing `trimui` tree; stop if an SD updater or a different frontend would conflict. Do not merge unknown startup scripts blindly.
@@ -68,10 +69,11 @@ These steps do not recover a running driver hang; a conflicting updater can bypa
 
 ## Built-in RomM client
 
-Stock preview: **[stock-tsp-0.2.0-rc.1](https://github.com/jellydn/slot-tsp/releases/tag/stock-tsp-0.2.0-rc.1)**.
-Download `slot-tsp-stock-0.2.0-rc.1-fat32.zip` and verify `SHA256SUMS`.
-Read the [preview notes](knulli/RELEASE-STOCK-0.2.0-rc.1.md). This rebuilt
-executable is host-checked, not handheld-tested; 0.1.0 remains the stable release.
+Included in **[stock-tsp-0.2.0](https://github.com/jellydn/slot-tsp/releases/tag/stock-tsp-0.2.0)**.
+Download `slot-tsp-stock-0.2.0-fat32.zip` and verify `SHA256SUMS`.
+Read the [release notes](knulli/RELEASE-STOCK-0.2.0.md). This rebuilt executable
+is host-checked, not handheld-tested. The earlier RomM-only RC remains available
+as history; it does not contain the Wi-Fi wake correction.
 
 Source builds include RomM in both `device` (Knulli) and `stock-tg5040`.
 For desktop testing, add `--features romm`. This is Slot code, not Grout or
