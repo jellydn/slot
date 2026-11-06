@@ -133,6 +133,7 @@ fn real_worker_extracts_both_formats_offline_and_keeps_existing_labels() {
     for (name, bytes) in [
         ("Text.p8", text()),
         ("Image.p8.png", png(160, 205)),
+        ("Encoded.P8", png(160, 205)),
         ("Custom.p8", text()),
     ] {
         put(d.path(), &format!("Games/PICO8/{name}"), &bytes);
@@ -166,14 +167,19 @@ fn real_worker_extracts_both_formats_offline_and_keeps_existing_labels() {
             std::thread::sleep(Duration::from_millis(5));
         }
     }
-    assert!(matches!(events.first(), Some(ArtEvent::Counted(3))));
+    assert!(matches!(events.first(), Some(ArtEvent::Counted(4))));
     assert!(
-        matches!(events.last(), Some(ArtEvent::Done { landed: 2, missed }) if missed == &["Missing.p8"])
+        matches!(events.last(), Some(ArtEvent::Done { landed: 3, missed }) if missed == &["Missing.p8"]),
+        "unexpected local fetch results: {events:?}"
     );
-    for name in ["Text.p8", "Image.p8.png"] {
+    for name in ["Text.p8", "Image.p8.png", "Encoded.P8"] {
         let path = d.path().join(format!("Labels/PICO8/{name}.png"));
-        let (w, h, _) = decode(&std::fs::read(path).unwrap());
+        let (w, h, pixels) = decode(&std::fs::read(path).unwrap());
         assert_eq!((w, h), (128, 128));
+        if name != "Text.p8" {
+            assert_eq!(&pixels[..3], &[16, 24, 61]);
+            assert_eq!(&pixels[(127 * 128 + 127) * 3..], &[143, 151, 61]);
+        }
         let cart = slot_store::scan(d.path())
             .unwrap()
             .into_iter()

@@ -64,10 +64,22 @@ No SD operation is performed while preparing this draft.
 The package was built from an **uncommitted snapshot** at checkpoint
 `226de404bbac07b35a53edfa54f37c18f77cea0b`, against fork baseline
 `7d14cc6c9b4017a5dc2739c5ea54279a70f7a14b`. The snapshot/manifest hashes,
-not that checkpoint alone, identify the shipped source. Draft commits organise
-that work and add current status documentation; they do not rebuild or change
-the frozen package. See [pinned inputs](README.md#pinned-inputs),
+not that checkpoint alone, identify the shipped source. The initial draft
+commits organise that work and add current status documentation; a later
+review correction is listed below. Neither rebuilds or changes the frozen
+package. See [pinned inputs](README.md#pinned-inputs),
 [Swan source/licences](SWANSTATION.md) and [notices](NOTICE.md).
+
+### Draft-only review correction — not installed
+
+Code review found that local labels selected the decoder by filename, while
+RomM and fake-08 accept PNG cartridges named `.p8`. An authored real-worker
+regression failed with `Encoded.P8: Malformed`, although the same PNG worked
+as `.p8.png`. Local labels now detect the PNG signature after the existing
+filename and size checks, then use the same bounded PNG decoder. The worker
+checks exact cropped pixels, full output naming and preserved custom labels.
+This change is not in test.9 and is not a diagnosis of the owner's unspecified
+PICO symptom. No new package or SD update was made.
 
 Swan revision `631f0fb31b809e0f889d7c551fe695788e39c1d3` retains GPL v3
 and separate dependency notices, including MIT PCSX-Redux OpenBIOS replacement

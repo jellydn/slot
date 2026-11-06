@@ -69,7 +69,8 @@ pub fn read_label(path: &Path) -> Result<Vec<u8>, LabelError> {
     if bytes.len() as u64 > MAX_CART_BYTES {
         return Err(LabelError::TooLarge);
     }
-    let pixels = if is_png {
+    // RomM and fake-08 also accept PNG-encoded cartridges named .p8.
+    let pixels = if is_png || bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         png_label(&bytes)?
     } else {
         text_label(&bytes)?
