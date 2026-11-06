@@ -23,6 +23,10 @@ impl ButtonMask {
     pub const X: u16 = 1 << 9;
     pub const L: u16 = 1 << 10;
     pub const R: u16 = 1 << 11;
+    pub const L2: u16 = 1 << 12;
+    pub const R2: u16 = 1 << 13;
+    pub const L3: u16 = 1 << 14;
+    pub const R3: u16 = 1 << 15;
 
     pub fn without_turbo(self) -> ButtonMask {
         ButtonMask(self.0 & !(Self::X | Self::Y))
@@ -46,6 +50,30 @@ impl ButtonMask {
 pub struct AvInfo {
     pub fps: f64,
     pub sample_rate: f64,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct FrameGeometry {
+    pub width: u32,
+    pub height: u32,
+    pub aspect: f32,
+}
+
+impl Default for FrameGeometry {
+    fn default() -> Self {
+        Self {
+            width: GBA_W,
+            height: GBA_H,
+            aspect: GBA_W as f32 / GBA_H as f32,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum Controller {
+    #[default]
+    Digital,
+    DualShock,
 }
 
 #[derive(Debug)]
@@ -84,8 +112,31 @@ pub trait RetroCore: Send {
     }
     fn set_option(&mut self, _key: &str, _value: &str) {}
     fn set_frame_skip(&mut self, _skip: bool) {}
+    fn uses_gb_buttons(&self) -> bool {
+        true
+    }
+    fn sync_to_display(&self) -> bool {
+        true
+    }
+    fn set_analog(&mut self, _sticks: [[i16; 2]; 2]) {}
+    fn set_controller(&mut self, _controller: Controller) {}
+    fn disc_count(&mut self) -> u32 {
+        0
+    }
+    fn selected_disc(&mut self) -> u32 {
+        0
+    }
+    fn select_disc(&mut self, _index: u32) -> Result<(), CoreError> {
+        Err(CoreError::Unsupported("core has no disc control".into()))
+    }
+    fn video_geometry(&self) -> FrameGeometry {
+        FrameGeometry::default()
+    }
     fn video_xrgb8888(&self) -> &[u8];
     fn take_audio(&mut self) -> Vec<i16>;
+    fn supports_states(&self) -> bool {
+        true
+    }
     fn serialize(&mut self) -> Result<Vec<u8>, CoreError>;
     fn unserialize(&mut self, data: &[u8]) -> Result<(), CoreError>;
     fn save_ram(&self) -> Option<Vec<u8>>;
