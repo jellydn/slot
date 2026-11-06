@@ -438,3 +438,78 @@ fn the_summary_cart_is_there_on_its_first_frame() {
         "the cart popped in after the summary"
     );
 }
+
+#[test]
+fn local_pico_label_runs_through_the_real_offline_printer_and_studio() {
+    let surface = HeadlessSurface::new().expect("headless surface");
+    let mut c = Compositor::new(&surface).expect("compositor");
+    let d = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(d.path().join("Games/PICO8")).unwrap();
+    std::fs::create_dir_all(d.path().join("Config")).unwrap();
+    clocked(d.path());
+    let mut text =
+        String::from("pico-8 cartridge // http://www.pico-8.com\nversion 42\n__lua__\n__label__\n");
+    for y in 0i32..128 {
+        for x in 0i32..128 {
+            text.push(if (x - 64).abs() + (y - 64).abs() < 35 {
+                'a'
+            } else if x < 64 {
+                'c'
+            } else {
+                '8'
+            });
+        }
+        text.push('\n');
+    }
+    std::fs::write(d.path().join("Games/PICO8/Local.p8"), text).unwrap();
+    std::fs::write(
+        d.path().join("Games/PICO8/NoLabel.p8"),
+        "pico-8 cartridge // http://www.pico-8.com\nversion 42\n__lua__\n",
+    )
+    .unwrap();
+    let mut f = Frontend::boot(Box::new(SimPlatform::at(d.path().to_path_buf())));
+    f.upload_bezel(&mut c, (720, 480));
+    f.set_art_jobs(slot::art::jobs::art_jobs(d.path().to_path_buf()));
+    assert!(!f.app().wifi_up());
+    f.app_mut().open_fetch_art();
+    compose_until(&mut f, &mut c, |f| f.app().fetch_examples_ready());
+    f.compose(&mut c);
+    dump(&c.read_frame(), "pico-choice");
+    press(&mut f, Btn::A);
+    compose_until(
+        &mut f,
+        &mut c,
+        |f| matches!(f.app().fetch_art(), Some(FetchArt::Running(r)) if r.scene.is_some()),
+    );
+    let start = match f.app().fetch_art().unwrap() {
+        FetchArt::Running(r) => r.scene.as_ref().unwrap().started_ms,
+        _ => unreachable!(),
+    };
+    f.app_mut()
+        .tick_ms((start + slot::fetch_art::stage_start(Stage::Rest) + 200.0) as u64);
+    f.compose(&mut c);
+    dump(&c.read_frame(), "pico-applied");
+    compose_until(&mut f, &mut c, |f| {
+        matches!(f.app().fetch_art(), Some(FetchArt::Summary { .. }))
+    });
+    assert!(
+        matches!(f.app().fetch_art(), Some(FetchArt::Summary { landed: 1, missed, failed: None, .. }) if missed == &["NoLabel.p8"])
+    );
+    assert!(f.app().fetch_featured_ready());
+    f.compose(&mut c);
+    dump(&c.read_frame(), "pico-summary");
+    press(&mut f, Btn::A);
+    f.app_mut().apply(Action::SelectTap);
+    compose_until(&mut f, &mut c, |f| f.app().studio().is_some());
+    assert!(f
+        .app()
+        .studio()
+        .unwrap()
+        .rows()
+        .contains(&slot::studio::Row::Label));
+    let now = f.app().now();
+    f.app_mut().tick_ms(now + 500);
+    f.compose(&mut c);
+    dump(&c.read_frame(), "pico-studio");
+    assert!(!d.path().join("Cache/art/index.json").exists());
+}

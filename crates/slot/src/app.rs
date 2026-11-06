@@ -6933,7 +6933,8 @@ impl App {
             self.studio_shelf_under = under;
             self.studio_opened = self.now();
             use slot_ui::house_label::LabelTag;
-            let mut studio = crate::studio::Studio::new(cart, wifi);
+            let local = cart.platform == Platform::Pico8;
+            let mut studio = crate::studio::Studio::new(cart, wifi || local);
             let tag = self.root.as_deref().and_then(|root| {
                 let label = crate::art::make::label_path(root, &studio.cart);
                 slot_ui::house_label::label_tag(&std::fs::read(label).ok()?)
@@ -6956,7 +6957,7 @@ impl App {
             self.play_held = None;
             self.studio_fetched = false;
             self.studio_applied = false;
-            if wifi {
+            if wifi || local {
                 self.fetch_studio_art();
             }
         }
@@ -6968,7 +6969,9 @@ impl App {
         };
         self.studio_fetched = true;
         self.art_pending += 1;
-        self.hold_wifi();
+        if cart.platform != Platform::Pico8 {
+            self.hold_wifi();
+        }
         self.art_jobs.ask(ArtJob::StudioFetch(cart));
     }
 
@@ -8146,9 +8149,18 @@ impl App {
             (Some(FetchArt::Choice { pick, .. }), Btn::A) => {
                 let kind = *pick;
                 self.art_pending += 1;
-                self.hold_wifi();
+                let local_only = self.root.as_deref().is_some_and(|root| {
+                    crate::art::rom::missing_art(root)
+                        .iter()
+                        .all(|c| c.platform == Platform::Pico8)
+                });
+                if !local_only {
+                    self.hold_wifi();
+                }
                 self.art_jobs.ask(ArtJob::FetchMissing(kind));
-                self.fetch_art = Some(FetchArt::Running(ArtRun::new(kind)));
+                let mut run = ArtRun::new(kind);
+                run.local_only = local_only;
+                self.fetch_art = Some(FetchArt::Running(run));
             }
             (Some(FetchArt::Choice { .. }), Btn::B) => self.fetch_art = None,
             (Some(FetchArt::Running(_)), Btn::B) => self.cancel_fetch_art(),
@@ -8259,6 +8271,8 @@ impl App {
                 carts(*missing, "has no art", "have no art"),
                 "Real Label".into(),
                 "Logo Only".into(),
+                "PICO-8: local labels, no Wi-Fi needed".into(),
+                "Online: GB/GBC/GBA. PS1: upload PNG".into(),
             ],
             Some(FetchArt::Running(run)) => match &run.scene {
                 None if (run.skipping || run.closing.is_some()) && !run.stopping => vec![
@@ -8271,6 +8285,7 @@ impl App {
                     format!("{} of {}", scene.number, run.total.max(scene.number)),
                 ],
                 None if run.stopping => vec!["Stopping".into()],
+                None if run.local_only => vec!["Reading Cartridge Labels".into()],
                 None if !run.counted && !self.wifi_up() => vec!["Connecting to Wi-Fi".into()],
                 None => vec!["Fetching Art".into()],
             },
@@ -8350,6 +8365,8 @@ impl App {
             Some(FetchArt::Choice { pick, .. }) => {
                 self.draw_fetch_text(0, mid, 26.0, out);
                 self.draw_fetch_choice(*pick, out);
+                self.draw_fetch_text(4, mid, 370.0, out);
+                self.draw_fetch_text(5, mid, 394.0, out);
                 0
             }
             Some(FetchArt::Running(run)) => {

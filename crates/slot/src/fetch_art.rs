@@ -68,6 +68,7 @@ pub struct Scene {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Run {
     pub kind: Option<Kind>,
+    pub local_only: bool,
     pub counted: bool,
     pub total: usize,
     pub played: usize,

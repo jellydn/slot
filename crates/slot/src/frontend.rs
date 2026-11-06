@@ -347,7 +347,7 @@ fn sync_fetch_art(app: &mut App, compositor: &mut Compositor, st: &mut FetchSync
         let paper = compositor.create_texture(1, 1, &[0xf6, 0xf4, 0xef, 255]);
         app.set_fetch_paper(paper);
     }
-    if !st.examples_asked && app.wifi_configured() {
+    if !st.examples_asked && (app.wifi_configured() || app.fetch_art().is_some()) {
         st.examples_asked = true;
         st.faces.ask(FaceJob::Examples);
     }
