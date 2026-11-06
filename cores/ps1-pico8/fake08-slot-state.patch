@@ -1,0 +1,939 @@
+--- a/source/p8GlobalLuaFunctions.h
++++ b/source/p8GlobalLuaFunctions.h
+@@ -339,43 +339,55 @@
+ eris.original_G = {}
+ 
+ eris.init_persist_all = function()
+-  -- lua pairs is not sorted. The order is actually random, changes on every execution (wtf?)
+-  
+-  eris.settings("path", true)
+-  
+-  local keyset={}
+-  local n=0
+-  for k,v in pairs(_G) do
+-    n=n+1
+-    keyset[n]=k
+-  end
+-  table.sort(keyset)
+-  local i=0
+-  for i=1,n do
+-    local k=keyset[i]
+-    local v=_G[k]
+-    eris.perm[v] = i
+-    eris.unperm[i] = v
+-    eris.original_G[k] = v
++  eris.settings("maxrec", 256)
++  -- Permanent function names must agree in a freshly opened interpreter.
++  -- Tables and coroutine stacks are gameplay state, not permanent objects.
++  local visited = {[_G]=true, [eris]=true}
++  eris.perm[_G] = "globals"
++  eris.unperm.globals = _G
++  eris.perm[eris] = "eris"
++  eris.unperm.eris = eris
++  local function walk(t, path)
++    local keys = {}
++    for k in next,t do add(keys,k) end
++    table.sort(keys)
++    for _,k in ipairs(keys) do
++      local v = rawget(t,k)
++      local name = path.."/"..k
++      if type(v)=="function" and not eris.perm[v] then
++        eris.perm[v] = name
++        eris.unperm[name] = v
++      elseif type(v)=="table" and not visited[v] then
++        visited[v] = true
++        walk(v,name)
++      end
++    end
+   end
++  walk(_G, "")
+ end
+ 
+ eris.persist_all = function()
+-  local new_symbols = {}
+-  for k,v in pairs(_G) do
+-    if eris.original_G[k] != v then
+-       new_symbols[k] = v
+-    end
++  local globals = {}
++  for k,v in next,_G do
++    if k!="_G" and k!="eris" then rawset(globals,k,v) end
+   end
+-
+-  return eris.persist(eris.perm, new_symbols)
++  return eris.persist(eris.perm, {globals=globals, stringmeta=getmetatable("")})
+ end
+ 
+ eris.restore_all = function(persisted)
+-  local new_symbols = eris.unpersist(eris.unperm, persisted)
+-  for k,v in pairs(new_symbols) do
+-    _G[k] = v
++  local root = eris.unpersist(eris.unperm, persisted)
++  local globals = rawget(root,"globals")
++  if type(globals)!="table" or type(rawget(globals,"__cart_sandbox"))!="table" then
++    error("snapshot has no cart sandbox")
++  end
++  local set, iter, registry, setmeta = rawset, next, debug.getregistry(), debug.setmetatable
++  local destination = _G
++  for k in iter,destination do
++    if k!="_G" and k!="eris" then set(destination,k,nil) end
+   end
++  for k,v in iter,globals do set(destination,k,v) end
++  set(registry,"__PICO8_SANDBOX",rawget(globals,"__cart_sandbox"))
++  setmeta("",rawget(root,"stringmeta"))
+ end
+ 
+ function __z8_strlen(s)
+@@ -760,4 +772,3 @@
+ 
+ )#";
+ 
+-
+--- a/source/vm.cpp
++++ b/source/vm.cpp
+@@ -38,6 +38,28 @@
+ static const char DefaultCartName[] = "__FAKE08-DEFAULT.p8";
+ static const char SettingsCartName[] = "__FAKE08-SETTINGS.p8";
+ 
++static void* snapshotAlloc(void* context, void* ptr, size_t oldSize, size_t size) {
++    auto& used = *static_cast<size_t*>(context);
++    if (!ptr) oldSize = 0;
++    const size_t limit = 32 * 1024 * 1024;
++    if (size > limit || used - oldSize > limit - size) return nullptr;
++    if (!size) {
++        free(ptr);
++        used -= oldSize;
++        return nullptr;
++    }
++    void* next = realloc(ptr, size);
++    if (next) used = used - oldSize + size;
++    return next;
++}
++
++static void closeSnapshotLua(lua_State* state) {
++    void* context;
++    bool bounded = lua_getallocf(state, &context) == snapshotAlloc;
++    lua_close(state);
++    if (bounded) delete static_cast<size_t*>(context);
++}
++
+ bool _initializeLuaState(lua_State* luaState) {
+     // initialize Lua interpreter
+     
+@@ -167,21 +189,13 @@
+         return false;
+     }
+ 
+-    // Push the eris.init_persist_all function on the top of the lua stack (or nil if it doesn't exist)
+-    // we call this function to establish the default global state of things not to save in the save state
+-    // needs to be called after globals are loaded but before the cart is run, or _init is called
+-    //TODO: move these calls to the glue code?
+-    // lua_getglobal(luaState, "eris");
+-	// lua_getfield(luaState, -1, "init_persist_all");
+-
+-    // if (lua_pcall(luaState, 0, 0, 0)){
+-    //     Logger_Write("Error setting up lua persistence: %s\n", lua_tostring(luaState, -1));
+-    //     lua_pop(luaState, 1);
+-    //     return false;
+-    // }
+-
+-    // //pop the eris.init_persist_all fuction off the stack now that we're done with it
+-    // lua_pop(luaState, 1);
++    lua_getglobal(luaState, "eris");
++    lua_getfield(luaState, -1, "init_persist_all");
++    if (lua_pcall(luaState, 0, 0, 0)) {
++        lua_pop(luaState, 2);
++        return false;
++    }
++    lua_pop(luaState, 1);
+ 
+ 
+     return true;
+@@ -310,7 +324,7 @@
+     if (_luaState != nullptr) {
+         Logger_Write("closing lua state\n");
+     
+-        lua_close(_luaState);
++        closeSnapshotLua(_luaState);
+         _luaState = nullptr;
+         Logger_Write("closed lua state\n");
+     }
+@@ -1490,34 +1504,132 @@
+ }
+ 
+ 
+-size_t Vm::serializeLuaState(char* dest) {
++size_t Vm::serializeLuaState(char* dest, size_t capacity) {
++    const int top = lua_gettop(_luaState);
+     lua_getglobal(_luaState, "eris");
+ 	lua_getfield(_luaState, -1, "persist_all");
+ 
+ 	if (lua_pcall(_luaState, 0, 1, 0) != 0) {
+-		std::string e = lua_tostring(_luaState, -1);
+-		lua_pop(_luaState, 1);
++		lua_settop(_luaState, top);
+ 		return 0;
+ 	}
+ 
+-	size_t len;
++	size_t len = 0;
+ 	const char* result = lua_tolstring(_luaState, -1, &len);
+-    memcpy(dest, result, len);
+-	lua_pop(_luaState, 2);
+-
++    if (!result || !len || len > capacity) len = 0;
++    if (len) memcpy(dest, result, len);
++    lua_settop(_luaState, top);
+     return len;
+ }
+ 
+-void Vm::deserializeLuaState(const char* src, size_t len) {
+-    lua_getglobal(_luaState, "eris");
+-	lua_getfield(_luaState, -1, "restore_all");
+-	lua_pushlstring(_luaState, src, len);
++bool Vm::deserializeLuaState(const char* src, size_t len) {
++    // Build and validate independently; a Lua error must not destroy the running cart.
++    if (!src || !len || len > 1024 * 1024) return false;
++    auto allocated = new size_t(0);
++    lua_State* staged = lua_newstate(snapshotAlloc, allocated);
++    if (!staged) { delete allocated; return false; }
++    // Eris builds prototype links without GC write barriers. Do not collect
++    // its incomplete graph; the staged allocator still bounds peak memory.
++    lua_gc(staged, LUA_GCSTOP, 0);
++    lua_setpico8memory(staged, _memory->data);
++    if (!_initializeLuaState(staged)) {
++        closeSnapshotLua(staged);
++        return false;
++    }
++    lua_getglobal(staged, "eris");
++    lua_getfield(staged, -1, "restore_all");
++    lua_pushlstring(staged, src, len);
++    if (lua_pcall(staged, 1, 0, 0) != LUA_OK) {
++        closeSnapshotLua(staged);
++        return false;
++    }
++    lua_settop(staged, 0);
++    lua_gc(staged, LUA_GCRESTART, 0);
++    closeSnapshotLua(_luaState);
++    _luaState = staged;
++    return true;
++}
+ 
+-	if (lua_pcall(_luaState, 1, 0, 0) != 0) {
+-		std::string e = lua_tostring(_luaState, -1);
+-		lua_pop(_luaState, 1);
+-		return;
+-	}
+-	lua_pop(_luaState, 1);
++template<size_t N>
++static bool snapshotString(char (&dest)[N], const std::string& value) {
++    if (value.size() >= N || value.find('\0') != std::string::npos) return false;
++    memcpy(dest, value.c_str(), value.size() + 1);
++    return true;
+ }
+ 
++uint64_t Vm::snapshotCartIdentity() const {
++    if (!_loadedCart) return 0;
++    uint64_t hash = 14695981039346656037ULL;
++    for (unsigned char c : _loadedCart->LuaString) hash = (hash ^ c) * 1099511628211ULL;
++    for (unsigned char c : _loadedCart->CartRom.data) hash = (hash ^ c) * 1099511628211ULL;
++    return hash;
++}
++
++bool Vm::captureSnapshot(Snapshot& out) {
++    if (!_loadedCart || _cartChangeQueued || !_cartLoadError.empty()) return false;
++    out = {};
++    out.ram = *_memory;
++    out.audio = _audio->_audioState;
++    out.fps = _targetFps;
++    out.frames = _picoFrameCount;
++    out.cartdataCount = _cartdataKeyCount;
++    out.noise = z8::synth::noiseState;
++    out.paused = _pauseMenu;
++    out.clearInput = _clearInputOnResume;
++    out.audioPaused = _audio->_paused;
++    memcpy(out.draw, _drawStateCopy, sizeof(out.draw));
++    out.down = _input->_currentKDown;
++    out.held = _input->_currentKHeld;
++    memcpy(out.repeats, _input->_framesHeld, sizeof(out.repeats));
++    out.mouseX = _input->_mouseX;
++    out.mouseY = _input->_mouseY;
++    out.mouseButtons = _input->_mouseBtnState;
++    out.kbDown = _input->_kbDown;
++    for (int i = 0; i < 4; ++i) if (!snapshotString(out.keys[i], _cartdataKeys[i])) return false;
++    return snapshotString(out.currentKey, _currentCartdataKey)
++        && snapshotString(out.previous, _prevCartKey)
++        && snapshotString(out.breadcrumb, _cartBreadcrumb)
++        && snapshotString(out.param, _cartParam)
++        && snapshotString(out.keyboard, _input->_kbKey)
++        && validSnapshot(out);
++}
++
++bool Vm::validSnapshot(const Snapshot& in) const {
++    if ((in.fps != 30 && in.fps != 60) || in.frames < 0 || in.cartdataCount < 0
++        || in.cartdataCount > 4 || in.paused > 1 || in.clearInput > 1
++        || in.audioPaused > 1 || in.kbDown > 1 || !in.noise) return false;
++    for (const auto& key : in.keys) if (!memchr(key, 0, sizeof(key))) return false;
++    if (!memchr(in.currentKey, 0, sizeof(in.currentKey))
++        || !memchr(in.previous, 0, sizeof(in.previous))
++        || !memchr(in.breadcrumb, 0, sizeof(in.breadcrumb))
++        || !memchr(in.param, 0, sizeof(in.param))
++        || !memchr(in.keyboard, 0, sizeof(in.keyboard))) return false;
++    return true;
++}
++
++void Vm::applySnapshot(const Snapshot& in) {
++    *_memory = in.ram;
++    _audio->_audioState = in.audio;
++    _audio->_paused = in.audioPaused;
++    z8::synth::noiseState = in.noise;
++    _targetFps = in.fps;
++    _picoFrameCount = in.frames;
++    _pauseMenu = in.paused;
++    _clearInputOnResume = in.clearInput;
++    memcpy(_drawStateCopy, in.draw, sizeof(in.draw));
++    _cartdataKeyCount = in.cartdataCount;
++    for (int i = 0; i < 4; ++i) _cartdataKeys[i] = in.keys[i];
++    _currentCartdataKey = in.currentKey;
++    _prevCartKey = in.previous;
++    _cartBreadcrumb = in.breadcrumb;
++    _cartParam = in.param;
++    _input->_currentKDown = in.down;
++    _input->_currentKHeld = in.held;
++    memcpy(_input->_framesHeld, in.repeats, sizeof(in.repeats));
++    _input->_mouseX = in.mouseX;
++    _input->_mouseY = in.mouseY;
++    _input->_mouseBtnState = in.mouseButtons;
++    _input->_kbDown = in.kbDown;
++    _input->_kbKey = in.keyboard;
++    _cartChangeQueued = false;
++}
+--- a/source/vm.h
++++ b/source/vm.h
+@@ -62,6 +62,24 @@
+ 
+ 
+     public:
++    // Build-specific, pointer-free state. The container checks its ABI and checksum.
++    struct Snapshot {
++        PicoRam ram;
++        audioState_t audio;
++        int fps, frames, cartdataCount;
++        uint32_t noise;
++        uint8_t paused, clearInput, audioPaused, down, held, mouseButtons, kbDown;
++        uint8_t draw[64];
++        uint16_t repeats[8];
++        int16_t mouseX, mouseY;
++        char keys[4][65], currentKey[65];
++        char previous[1024], breadcrumb[1024], param[1024], keyboard[256];
++    };
++    bool captureSnapshot(Snapshot& out);
++    bool validSnapshot(const Snapshot& in) const;
++    void applySnapshot(const Snapshot& in);
++    uint64_t snapshotCartIdentity() const;
++
+     Vm(
+        Host* host,
+        PicoRam* memory = nullptr,
+@@ -173,7 +191,6 @@
+     string getCartBreadcrumb();
+     string getCartParam();
+ 
+-    size_t serializeLuaState(char* dest);
+-    void deserializeLuaState(const char* src, size_t len);
++    size_t serializeLuaState(char* dest, size_t capacity = 1024 * 1024);
++    bool deserializeLuaState(const char* src, size_t len);
+ };
+-
+--- a/source/Input.cpp
++++ b/source/Input.cpp
+@@ -6,7 +6,8 @@
+ 
+ Input::Input(PicoRam* memory):
+     _currentKDown(0),
+-    _currentKHeld(0)
++    _currentKHeld(0),
++    _mouseX(0), _mouseY(0), _mouseBtnState(0), _kbDown(false)
+ {
+     _memory = memory;
+ 
+@@ -14,7 +15,8 @@
+ }
+ 
+ void Input::SetState(uint8_t kdown, uint8_t kheld){
+-    _currentKDown = kdown;
++    // A 30 Hz cart can sample after the 60 Hz host's down-edge frame.
++    _currentKDown = kdown | (kheld & ~_currentKHeld);
+     _currentKHeld = kheld;
+     //key 6 (PAUSE MENU) only fires for one frame, even if held
+     if ((_currentKHeld & BITMASK(6)) && !(_currentKDown & BITMASK(6))) {
+@@ -120,4 +122,3 @@
+     _kbDown = false;
+     return _kbKey.c_str();
+ }
+-
+--- a/source/Input.h
++++ b/source/Input.h
+@@ -4,6 +4,7 @@
+ #include "PicoRam.h"
+ 
+ class Input{
++    friend class Vm;
+     PicoRam* _memory;
+ 	uint8_t _currentKDown;
+     uint8_t _currentKHeld;
+@@ -38,4 +39,4 @@
+ 	
+     bool getKeyDown();
+ 	const char* getKey();
+-};
+\ No newline at end of file
++};
+--- a/source/Audio.cpp
++++ b/source/Audio.cpp
+@@ -27,6 +27,7 @@
+ }
+ 
+ void Audio::resetAudioState() {
++    z8::synth::noiseState = 0x6d2b79f5;
+     _audioState._musicChannel.count = -1;
+     _audioState._musicChannel.pattern = -1;
+     _audioState._musicChannel.mask = 0;
+--- a/source/Audio.h
++++ b/source/Audio.h
+@@ -88,6 +88,7 @@
+ 
+ 
+ class Audio {
++    friend class Vm;
+     PicoRam* _memory;
+     audioState_t _audioState;
+     bool _paused;
+--- a/source/synth.cpp
++++ b/source/synth.cpp
+@@ -18,10 +18,16 @@
+ namespace z8
+ {
+ 
++uint32_t synth::noiseState = 0x6d2b79f5;
++
+ // Simple random function returning float in range [-1, 1]
+ static float rand_float()
+ {
+-    return ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f;
++    auto& n = synth::noiseState;
++    n ^= n << 13;
++    n ^= n >> 17;
++    n ^= n << 5;
++    return (float)(n >> 8) / 8388607.5f - 1.0f;
+ }
+ 
+ float synth::waveform(synth_param &params)
+--- a/source/synth.h
++++ b/source/synth.h
+@@ -51,6 +51,8 @@
+         INST_PHASER     = 7,
+     };
+ 
++    // The libretro instance owns this noise PRNG so snapshots can resume it.
++    static uint32_t noiseState;
+     static float waveform(synth_param &params);
+ };
+ 
+--- a/source/cart.cpp
++++ b/source/cart.cpp
+@@ -396,6 +396,8 @@
+ }
+ 
+ Cart::Cart (const unsigned char* cartData, size_t size){
++    // Memory-loaded text carts may omit graphics/audio sections, just like files.
++    initCartRom();
+     if (size < 5) {
+         LoadError = "Invalid cart. Less than 5 bytes";
+         return;
+@@ -691,4 +693,3 @@
+     } 
+ }
+ 
+-
+--- a/platform/libretro/libretro.cpp
++++ b/platform/libretro/libretro.cpp
+@@ -511,229 +511,7 @@
+ //lua memory is 2 MB in size. 1 MB enough for non-globals?
+ //https://www.lexaloffle.com/dl/docs/pico-8_manual.html
+ //section 6.7: Memory
+-#define LUASTATEBUFFSIZE 1024*1024
+-char luaStateBuffer[LUASTATEBUFFSIZE];
+-
+-EXPORT size_t retro_serialize_size()
+-{
+-    return 
+-    //header
+-    4 + 
+-    //size plus ram state
+-    sizeof(size_t) + sizeof(PicoRam) + 
+-    //size plus audio state
+-    sizeof(size_t) + sizeof(audioState_t) + 
+-    //size plus lua state
+-    sizeof(size_t) + LUASTATEBUFFSIZE;
+-}
+-
+-#define SAVE_STATE_HEADER_SIZE 4
+-
+-EXPORT bool retro_serialize(void *data, size_t size)
+-{
+-    if (log_cb) {
+-        log_cb(RETRO_LOG_INFO, "retro_serialize. Checking size\n");
+-    }
+-    const size_t expectedSize = retro_serialize_size();
+-    if (size > expectedSize) {
+-        size = expectedSize;
+-    }
+-    else if (size < expectedSize) {
+-        return false;
+-    }
+-
+-    if (log_cb) {
+-        log_cb(RETRO_LOG_INFO, "got size %d\n", size);
+-    }
+-
+-    if (log_cb) {
+-        log_cb(RETRO_LOG_INFO, "setting up lua state buffer\n");
+-    }
+-    char headerBuffer[SAVE_STATE_HEADER_SIZE] = {'f', '8', 0, 1};
+-    memcpy((char*)data, &headerBuffer, SAVE_STATE_HEADER_SIZE);
+-    
+-    memset(luaStateBuffer, 0, LUASTATEBUFFSIZE);
+-
+-    if (log_cb) {
+-        log_cb(RETRO_LOG_INFO, "serializing lua state\n");
+-    }
+-    size_t offset = SAVE_STATE_HEADER_SIZE;
+-    size_t luaStateSize = _vm->serializeLuaState(luaStateBuffer);
+-
+-    if (log_cb) {
+-        log_cb(RETRO_LOG_INFO, "copying lua state size to buffer\n");
+-    }
+-    memcpy(((char*)data + offset), &luaStateSize, sizeof(size_t));
+-    offset += sizeof(size_t);
+-
+-    if (log_cb) {
+-        log_cb(RETRO_LOG_INFO, "copying lua state to buffer\n");
+-    }
+-
+-    memcpy(((char*)data + offset), luaStateBuffer, luaStateSize);
+-    offset += luaStateSize;
+-
+-    if (log_cb) {
+-        log_cb(RETRO_LOG_INFO, "copying pico 8 memory to buffer\n");
+-    }
+-
+-    size_t picoRamSize = sizeof(PicoRam);
+-    memcpy(((char*)data + offset), &picoRamSize, sizeof(size_t));
+-    offset += sizeof(size_t);
+-
+-    memcpy(((char*)data + offset), _memory->data, sizeof(PicoRam));
+-    offset += sizeof(PicoRam);
+-
+-    if (log_cb) {
+-        log_cb(RETRO_LOG_INFO, "copying audio state size to buffer\n");
+-    }
+-
+-    size_t musicChannelSize = sizeof(musicChannel);
+-    memcpy(((char*)data + offset), &musicChannelSize, sizeof(size_t));
+-    offset += sizeof(size_t);
+-
+-    memcpy(((char*)data + offset), &_audio->getAudioState()->_musicChannel, sizeof(musicChannel));
+-    offset += sizeof(musicChannel);
+-
+-    if (log_cb) {
+-        log_cb(RETRO_LOG_INFO, "returning true\n");
+-    }
+-
+-    return true;
+-}
+-
+-
+-bool deserialize_legacy(const void *data, size_t size) {
+-    if (log_cb) {
+-        log_cb(RETRO_LOG_INFO, "LEGACY lua deserialize LEGACY\n");
+-    }
+-
+-    if (log_cb) {
+-        log_cb(RETRO_LOG_INFO, "LEGACY setting up lua state buffer\n");
+-    }
+-    memset(luaStateBuffer, 0, LUASTATEBUFFSIZE);
+-
+-    if (log_cb) {
+-        log_cb(RETRO_LOG_INFO, "LEGACY copying lua state from buffer to var\n");
+-    }
+-    size_t offset = 0;
+-    size_t luaStateSize;
+-    memcpy(&luaStateSize, ((char*)data + offset),  sizeof(size_t));
+-    offset += sizeof(size_t);
+-
+-    if (log_cb) {
+-        log_cb(RETRO_LOG_INFO, "LEGACY got lua state size %d\n", luaStateSize);
+-    }
+-
+-    if (log_cb) {
+-        log_cb(RETRO_LOG_INFO, "LEGACY copying lua state\n");
+-    }
+-
+-    memcpy(luaStateBuffer, ((char*)data + offset), luaStateSize);
+-    offset += luaStateSize;
+-
+-    if (log_cb) {
+-        log_cb(RETRO_LOG_INFO, "LEGACY deserializing lua state\n");
+-    }
+-    _vm->deserializeLuaState(luaStateBuffer, luaStateSize);
+-
+-    if (log_cb) {
+-        log_cb(RETRO_LOG_INFO, "LEGACY copying pico 8 memory\n");
+-    }
+-
+-    memcpy(_memory->data, ((char*)data + offset), sizeof(PicoRam));
+-    offset += sizeof(PicoRam);
+-
+-    if (log_cb) {
+-        log_cb(RETRO_LOG_INFO, "LEGACY copying audio state\n");
+-    }
+-
+-    memcpy(&_audio->getAudioState()->_musicChannel, ((char*)data + offset), sizeof(musicChannel));
+-    offset += sizeof(audioState_t);
+-    
+-    return true;
+-}
+-
+-
+-EXPORT bool retro_unserialize(const void *data, size_t size)
+-{
+-    if (log_cb) {
+-        log_cb(RETRO_LOG_INFO, "lua deserialize\n");
+-    }
+-
+-    if (log_cb) {
+-        log_cb(RETRO_LOG_INFO, "setting up lua state buffer\n");
+-    }
+-    memset(luaStateBuffer, 0, LUASTATEBUFFSIZE);
+-
+-    if (log_cb) {
+-        log_cb(RETRO_LOG_INFO, "copying lua state from buffer to var\n");
+-    }
+-    //read header
+-    char headerBuffer[SAVE_STATE_HEADER_SIZE];
+-    memcpy(&headerBuffer, data, SAVE_STATE_HEADER_SIZE);
+-    bool legacy = true;
+-    if (headerBuffer[0] == 'f' && headerBuffer[1] == '8') {
+-        legacy = false;
+-    }
+-
+-    if (legacy) {
+-        return deserialize_legacy(data, size);
+-    }
+-
+-    size_t offset = SAVE_STATE_HEADER_SIZE;
+-    size_t luaStateSize;
+-    memcpy(&luaStateSize, ((char*)data + offset),  sizeof(size_t));
+-    offset += sizeof(size_t);
+-
+-    if (log_cb) {
+-        log_cb(RETRO_LOG_INFO, "got lua state size %d\n", luaStateSize);
+-    }
+-
+-    if (log_cb) {
+-        log_cb(RETRO_LOG_INFO, "copying lua state\n");
+-    }
+-
+-    memcpy(luaStateBuffer, ((char*)data + offset), luaStateSize);
+-    offset += luaStateSize;
+-
+-    if (log_cb) {
+-        log_cb(RETRO_LOG_INFO, "deserializing lua state\n");
+-    }
+-    _vm->deserializeLuaState(luaStateBuffer, luaStateSize);
+-
+-    if (log_cb) {
+-        log_cb(RETRO_LOG_INFO, "copying pico 8 memory\n");
+-    }
+-
+-    size_t picoRamSize;
+-    memcpy(&picoRamSize, ((char*)data + offset),  sizeof(size_t));
+-    offset += sizeof(size_t);
+-
+-    if (picoRamSize != sizeof(PicoRam)) {
+-        log_cb(RETRO_LOG_WARN, "mismatch in expected PicoRam size\n");
+-    }
+-
+-    memcpy(_memory->data, ((char*)data + offset), picoRamSize);
+-    offset += picoRamSize;
+-
+-    if (log_cb) {
+-        log_cb(RETRO_LOG_INFO, "copying audio state\n");
+-    }
+-
+-    size_t musicChannelSize;
+-    memcpy(&musicChannelSize, ((char*)data + offset),  sizeof(size_t));
+-    offset += sizeof(size_t);
+-
+-    if (musicChannelSize != sizeof(musicChannel)) {
+-        log_cb(RETRO_LOG_WARN, "mismatch in expected music channel size\n");
+-    }
+-
+-    memcpy(&_audio->getAudioState()->_musicChannel, ((char*)data + offset), musicChannelSize);
+-    offset += musicChannelSize;
+-    
+-    return true;
+-}
++#include "slotstate.h"
+ 
+ EXPORT void retro_cheat_reset()
+ {
+@@ -760,12 +538,14 @@
+ 
+     if (info->size > 0) {
+         const unsigned char* data = reinterpret_cast<const unsigned char*>(info->data);
+-        _vm->QueueCartChange(data, info->size);
++        if (!_vm->LoadCart(data, info->size, false)) return false;
+     }
+     else {
+-        _vm->QueueCartChange(info->path);
++        if (!_vm->LoadCart(info->path, false)) return false;
+     }
+ 
++    // A frontend may restore immediately after load, before its first frame.
++    _vm->vm_run();
+     return true;
+ }
+ 
+--- a/libs/z8lua/eris.c
++++ b/libs/z8lua/eris.c
+@@ -831,11 +831,19 @@
+ 
+ static void
+ p_metatable(Info *info) {                                          /* ... obj */
+-  eris_checkstack(info->L, 1);
++  eris_checkstack(info->L, 2);
+   pushpath(info, "@metatable");
+   if (!lua_getmetatable(info->L, -1)) {                        /* ... obj mt? */
+     lua_pushnil(info->L);                                      /* ... obj nil */
+   }                                                         /* ... obj mt/nil */
++  if (lua_istable(info->L, -1)) {
++    lua_pushliteral(info->L, "__gc");
++    lua_rawget(info->L, -2);
++    if (!lua_isnil(info->L, -1)) {
++      eris_error(info, "snapshot finalizers are unsupported");
++    }
++    lua_pop(info->L, 1);
++  }
+   persist(info);                                            /* ... obj mt/nil */
+   lua_pop(info->L, 1);                                             /* ... obj */
+   poppath(info);
+@@ -843,10 +851,16 @@
+ 
+ static void
+ u_metatable(Info *info) {                                          /* ... tbl */
+-  eris_checkstack(info->L, 1);
++  eris_checkstack(info->L, 2);
+   pushpath(info, "@metatable");
+   unpersist(info);                                         /* ... tbl mt/nil? */
+   if (lua_istable(info->L, -1)) {                               /* ... tbl mt */
++    lua_pushliteral(info->L, "__gc");
++    lua_rawget(info->L, -2);
++    if (!lua_isnil(info->L, -1)) {
++      eris_error(info, "snapshot finalizers are unsupported");
++    }
++    lua_pop(info->L, 1);
+     lua_setmetatable(info->L, -2);                                 /* ... tbl */
+   }
+   else if (lua_isnil(info->L, -1)) {                           /* ... tbl nil */
+@@ -992,27 +1006,8 @@
+ 
+       /* Function value, call it and don't persist literally. */
+       case LUA_TFUNCTION:                                  /* ... obj mt func */
+-        lua_replace(info->L, -2);                             /* ... obj func */
+-        lua_pushvalue(info->L, -2);                       /* ... obj func obj */
+-
+-        if (info->passIOToPersist) {
+-          lua_pushlightuserdata(info->L, (void*)info->u.pi.writer);
+-                                                   /* ... obj func obj writer */
+-          lua_pushlightuserdata(info->L, info->u.pi.ud);
+-                                                /* ... obj func obj writer ud */
+-          lua_call(info->L, 3, 1);                           /* ... obj func? */
+-        }
+-        else {
+-          lua_call(info->L, 1, 1);                           /* ... obj func? */
+-        }
+-        if (!lua_isfunction(info->L, -1)) {                     /* ... obj :( */
+-          eris_error(info, ERIS_ERR_SPER_FUNC, info->u.pi.metafield);
+-        }                                                     /* ... obj func */
+-
+-        /* Special persistence, call this function when unpersisting. */
+-        WRITE_VALUE(true, uint8_t);
+-        persist(info);                                        /* ... obj func */
+-        lua_pop(info->L, 1);                                       /* ... obj */
++        /* Slot snapshots cannot execute cart callbacks while staging a restore. */
++        eris_error(info, "custom persistence callbacks are unsupported");
+         return;
+       default:                                               /* ... obj mt :( */
+         eris_error(info, ERIS_ERR_SPER_TYPE, info->u.pi.metafield);
+@@ -1037,36 +1032,7 @@
+ u_special(Info *info, int type, Callback literal) {                    /* ... */
+   eris_checkstack(info->L, 2);
+   if (READ_VALUE(uint8_t)) {
+-    int reference;
+-    /* Reserve entry in the reftable before unpersisting the function to keep
+-     * the reference order intact. We can set this to nil at first, because
+-     * there's no way the special function would access this. */
+-    lua_pushnil(info->L);                                          /* ... nil */
+-    reference = registerobject(info);
+-    lua_pop(info->L, 1);                                               /* ... */
+-    /* Increment reference counter by one to compensate for the increment when
+-     * persisting a special object. */
+-    unpersist(info);                                           /* ... spfunc? */
+-    if (!lua_isfunction(info->L, -1)) {                             /* ... :( */
+-      eris_error(info, ERIS_ERR_SPER_UFUNC);
+-    }                                                           /* ... spfunc */
+-
+-    if (info->passIOToPersist) {
+-      lua_pushlightuserdata(info->L, &info->u.upi.zio);     /* ... spfunc zio */
+-      lua_call(info->L, 1, 1);                                    /* ... obj? */
+-    } else {
+-      lua_call(info->L, 0, 1);                                    /* ... obj? */
+-    }
+-
+-    if (lua_type(info->L, -1) != type) {                            /* ... :( */
+-      const char *want = kTypenames[type];
+-      const char *have = kTypenames[lua_type(info->L, -1)];
+-      eris_error(info, ERIS_ERR_SPER_LOAD, want, have);
+-    }                                                              /* ... obj */
+-
+-    /* Update the reftable entry. */
+-    lua_pushvalue(info->L, -1);                                /* ... obj obj */
+-    lua_rawseti(info->L, 2, reference);                            /* ... obj */
++    eris_error(info, "custom persistence callbacks are unsupported");
+   }
+   else {
+     literal(info);                                                 /* ... obj */
+@@ -2282,6 +2248,7 @@
+   Mbuffer *buff = (Mbuffer*)ud;
+   const size_t size = eris_bufflen(buff);
+   const size_t capacity = eris_sizebuffer(buff);
++  if (size > 1024 * 1024 || sz > 1024 * 1024 - size) return 1;
+   if (capacity - size < sz) {
+     size_t newcapacity = capacity * 2; /* overflow checked below */
+     if (newcapacity - size < sz) {
+@@ -2711,4 +2678,3 @@
+ }
+ 
+ /* }======================================================================== */
+-
+--- a/platform/libretro/slotstate.h
++++ b/platform/libretro/slotstate.h
+@@ -0,0 +1,106 @@
++// Slot's pinned, build-specific state format. No legacy-state fallback.
++#include <stddef.h>
++#include <stdint.h>
++#include <type_traits>
++#include <cmath>
++
++#ifndef SLOT_STATE_ABI
++#define SLOT_STATE_ABI "scratch-not-for-distribution"
++#endif
++
++namespace {
++constexpr size_t luaCapacity = 1024 * 1024;
++struct StateHeader {
++    char magic[8];
++    char abi[65];
++    uint32_t version, endian, runtimeSize, luaSize;
++    uint64_t cart, frame;
++    double frameTime, previousTime;
++    int16_t mouseX, mouseY;
++    uint8_t held, down, mouseButtons;
++    uint32_t checksum;
++};
++constexpr char stateMagic[8] = {'S','L','O','T','F','0','8',0};
++constexpr char stateAbi[65] = SLOT_STATE_ABI;
++constexpr size_t stateSize = sizeof(StateHeader) + sizeof(Vm::Snapshot) + luaCapacity;
++static_assert(std::is_trivially_copyable<Vm::Snapshot>::value, "runtime image must be copyable");
++static_assert(sizeof(StateHeader) == 144 && offsetof(StateHeader, checksum) == 136,
++    "state header ABI changed: bump format version and update probes");
++
++uint32_t stateChecksum(const void* data) {
++    const auto bytes = static_cast<const uint8_t*>(data);
++    uint32_t hash = 2166136261U;
++    for (size_t i = 0; i < stateSize; ++i) {
++        if (i >= offsetof(StateHeader, checksum) && i < offsetof(StateHeader, checksum) + 4) continue;
++        hash = (hash ^ bytes[i]) * 16777619U;
++    }
++    return hash;
++}
++}
++
++EXPORT size_t retro_serialize_size() { return stateSize; }
++
++EXPORT bool retro_serialize(void* data, size_t size) {
++    if (!data || size != stateSize) return false;
++    Vm::Snapshot runtime{};
++    if (!_vm->captureSnapshot(runtime)) return false;
++    // The Lua writer copies only after checking its destination bound.
++    static char lua[luaCapacity];
++    const size_t length = _vm->serializeLuaState(lua, luaCapacity);
++    if (!length) return false;
++    StateHeader header{};
++    memcpy(header.magic, stateMagic, sizeof(stateMagic));
++    memcpy(header.abi, stateAbi, sizeof(stateAbi));
++    header.version = 1;
++    header.endian = 0x12345678;
++    header.runtimeSize = sizeof(runtime);
++    header.luaSize = length;
++    header.cart = _vm->snapshotCartIdentity();
++    header.frame = frame;
++    header.frameTime = frame_time;
++    header.previousTime = prev_frame_time;
++    header.mouseX = picoMouseX;
++    header.mouseY = picoMouseY;
++    header.held = kHeld;
++    header.down = kDown;
++    header.mouseButtons = mouseBtnState;
++    auto bytes = static_cast<char*>(data);
++    memset(bytes, 0, size);
++    memcpy(bytes, &header, sizeof(header));
++    memcpy(bytes + sizeof(header), &runtime, sizeof(runtime));
++    memcpy(bytes + sizeof(header) + sizeof(runtime), lua, length);
++    header.checksum = stateChecksum(data);
++    memcpy(bytes, &header, sizeof(header));
++    return true;
++}
++
++EXPORT bool retro_unserialize(const void* data, size_t size) {
++    if (!data || size != stateSize) return false;
++    StateHeader header;
++    memcpy(&header, data, sizeof(header));
++    if (memcmp(header.magic, stateMagic, sizeof(stateMagic))
++        || memcmp(header.abi, stateAbi, sizeof(stateAbi)) || header.version != 1
++        || header.endian != 0x12345678 || header.runtimeSize != sizeof(Vm::Snapshot)
++        || !header.luaSize || header.luaSize > luaCapacity
++        || header.cart != _vm->snapshotCartIdentity()
++        || !std::isfinite(header.frameTime) || !std::isfinite(header.previousTime)
++        || header.frame > SIZE_MAX || header.checksum != stateChecksum(data)) {
++        return false;
++    }
++    const auto bytes = static_cast<const char*>(data);
++    Vm::Snapshot runtime;
++    memcpy(&runtime, bytes + sizeof(header), sizeof(runtime));
++    if (!_vm->validSnapshot(runtime)) return false;
++    if (!_vm->deserializeLuaState(bytes + sizeof(header) + sizeof(runtime), header.luaSize)) return false;
++    // No fallible parse remains after the independent Lua state was accepted.
++    _vm->applySnapshot(runtime);
++    frame = header.frame;
++    frame_time = header.frameTime;
++    prev_frame_time = header.previousTime;
++    picoMouseX = header.mouseX;
++    picoMouseY = header.mouseY;
++    kHeld = header.held;
++    kDown = header.down;
++    mouseBtnState = header.mouseButtons;
++    return true;
++}
