@@ -27,6 +27,10 @@ impl Power {
         }
     }
 
+    pub fn backlight_step(&self) -> Option<u8> {
+        self.platform.backlight_step()
+    }
+
     pub fn battery(&self) -> Option<Battery> {
         self.platform.battery()
     }

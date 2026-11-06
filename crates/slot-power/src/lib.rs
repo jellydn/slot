@@ -56,6 +56,11 @@ pub enum LedState {
 
 pub trait Platform: Send {
     fn set_backlight(&mut self, step: u8);
+    /// Current hardware backlight step (0–10), when readback is supported.
+    fn backlight_step(&self) -> Option<u8> {
+        None
+    }
+
     fn battery(&self) -> Option<Battery>;
     fn charge(&self) -> Charge;
     fn set_led(&mut self, state: LedState);

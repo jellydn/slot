@@ -551,6 +551,7 @@ pub struct App {
     power_requested: bool,
     relaunching: bool,
     stock_power_owned: bool,
+    stock_controls_owned: bool,
     repairing: bool,
     repair_prompt: bool,
     reset_prompt: Option<QuickRow>,
@@ -1001,6 +1002,7 @@ impl App {
             power_requested: false,
             relaunching: false,
             stock_power_owned: false,
+            stock_controls_owned: false,
             repairing: false,
             repair_prompt: false,
             reset_prompt: None,
@@ -1663,6 +1665,14 @@ impl App {
             QuickRow::GbcBlending => Some(blending_value(self.state.blending_gbc)),
             QuickRow::GbBlending => Some(blending_value(self.state.blending_gb)),
             QuickRow::Blending => Some(blending_value(self.blending_in_play())),
+            QuickRow::Brightness if self.stock_controls_owned => Some(
+                self.power
+                    .as_ref()
+                    .and_then(Power::backlight_step)
+                    .map_or(QuickValue::Unavailable, |step| {
+                        QuickValue::level(step.saturating_sub(1))
+                    }),
+            ),
             QuickRow::Brightness => Some(QuickValue::level(self.brightness_level())),
             QuickRow::BlueLight => Some(match self.state.blue_light {
                 0 => QuickValue::Off,
@@ -3174,8 +3184,15 @@ impl App {
         self.stock_power_owned = true;
     }
 
+    /// Leave volume to stock firmware and use live hardware brightness, not saved levels.
+    pub fn set_stock_controls_owned(&mut self) {
+        self.stock_controls_owned = true;
+    }
+
     pub fn set_power(&mut self, mut power: Power) {
-        power.set_backlight(self.state.brightness + 1);
+        if !self.stock_controls_owned {
+            power.set_backlight(self.state.brightness + 1);
+        }
         self.headphones = power.headphones();
         self.hud.set_headphones(self.headphones);
         let secs = power.now();
@@ -4522,6 +4539,14 @@ impl App {
     }
 
     fn adjust(&mut self, action: Action) -> bool {
+        if self.stock_controls_owned
+            && matches!(
+                action,
+                Action::VolumeUp | Action::VolumeDown | Action::MuteToggle
+            )
+        {
+            return true;
+        }
         if action == Action::MuteToggle {
             self.mute_toggle();
             return true;
@@ -4576,6 +4601,9 @@ impl App {
         }
         if let Action::BrightnessUp | Action::BrightnessDown = action {
             self.step_brightness(action == Action::BrightnessUp);
+            if self.quick_value(QuickRow::Brightness) == Some(QuickValue::Unavailable) {
+                return true;
+            }
             let now = self.now();
             let muted = self.muted();
             self.hud
@@ -4604,6 +4632,21 @@ impl App {
     }
 
     fn step_brightness(&mut self, brighter: bool) {
+        if self.stock_controls_owned {
+            if let Some(power) = &mut self.power {
+                if let Some(step) = power.backlight_step() {
+                    let to = if brighter {
+                        step.saturating_add(1).clamp(1, 10)
+                    } else {
+                        step.saturating_sub(1).max(1)
+                    };
+                    if to != step {
+                        power.set_backlight(to);
+                    }
+                }
+            }
+            return;
+        }
         let s = &self.state;
         let dim = match brighter {
             true => s.dim.saturating_sub(1),
@@ -4709,10 +4752,22 @@ impl App {
     }
 
     pub fn dim(&self) -> u8 {
-        self.state.dim
+        if self.stock_controls_owned {
+            0
+        } else {
+            self.state.dim
+        }
     }
 
     pub fn brightness_level(&self) -> u8 {
+        if self.stock_controls_owned {
+            return self
+                .power
+                .as_ref()
+                .and_then(Power::backlight_step)
+                .unwrap_or(1)
+                .saturating_sub(1);
+        }
         DIM_MAX - self.state.dim.min(DIM_MAX) + self.state.brightness
     }
 
@@ -4741,7 +4796,9 @@ impl App {
     }
 
     pub fn muted(&self) -> bool {
-        if self.headphones {
+        if self.stock_controls_owned {
+            false
+        } else if self.headphones {
             self.state.muted_hp
         } else {
             self.state.muted
@@ -4757,7 +4814,9 @@ impl App {
     }
 
     pub fn output_volume(&self) -> u8 {
-        if self.muted() {
+        if self.stock_controls_owned {
+            VOLUME_MAX
+        } else if self.muted() {
             0
         } else {
             self.level()

@@ -587,6 +587,9 @@ impl Frontend {
         crate::boot_time::mark("session");
         let stale_check =
             Self::check_labels(platform.root(), session.app().carts().cloned().collect());
+        if cfg!(feature = "stock-tg5040") {
+            session.app_mut().set_stock_controls_owned();
+        }
         session
             .app_mut()
             .set_power(Power::new(platform, DOZE_TIMEOUT));

@@ -467,7 +467,7 @@ fn headphones_in(gpio: &str) -> bool {
         .is_some_and(|(_, state)| state.split_whitespace().nth(1) == Some("hi"))
 }
 
-fn backlight_value(step: u8, max: u32) -> u32 {
+pub(crate) fn backlight_value(step: u8, max: u32) -> u32 {
     let step = u32::from(step).min(TOP_STEP);
     if step == 0 {
         return 0;
