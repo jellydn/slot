@@ -6,6 +6,132 @@ fixes convention used by [jellydn/VoiceInk](https://github.com/jellydn/VoiceInk)
 
 ## [2026-11] - Sync & Fixes
 
+### Draft milestone — stock-tsp-0.3.0-test.9, not hardware accepted
+
+- Combine the local label/rewind work with optional SwanStation software
+  comparison. PCSX remains default; Swan cards are isolated and states,
+  quick states, automatic resume and rewind are disabled.
+- Authored offline boot, gameplay/input/audio, disc reads and card persistence
+  pass, including full Slot exit/restart. This is not a target-speed claim.
+- Test.9 was installed with separate owner approval, verified backup/readback
+  and safe eject. No additional SD/device change or stable release is included
+  in this draft. Frozen package/source receipts remain unchanged.
+- Latest owner feedback: PICO still fails at an unspecified step; Swan is
+  subjectively better but reported at 30–40 fps with choppy sound. Game, scene
+  and HUD metric are unconfirmed. Startup volume/LED and PS1 artwork sourcing
+  remain unresolved. See `cores/ps1-pico8/STATUS.md` for provenance and checks.
+
+### Local follow-up — account-free PICO-8 labels
+
+- Extract embedded `.p8` text labels and standard `.p8.png` visible labels
+  without accounts, network access, Lua execution or external includes.
+- Use the existing Fetch Missing Labels, Cart Studio and shared fetch-label
+  paths; keep existing/custom labels and Nintendo catalogue fetching.
+- Bound input size and PNG decoding; report missing, malformed and unsupported
+  labels without guessing. PS1 artwork remains manual; no provider mirror,
+  account settings, SD update or publication is included.
+- Default fresh/unset PS1 rewind to off, separately from Nintendo preferences.
+  Preserve explicit legacy global choices and existing capability gates; this
+  is an owner preference, not a proven performance repair.
+
+### Local diagnostic candidate — stock-tsp-0.3.0-test.7
+
+- Fix GameBit PS1/PICO-8 bezel collection 404 before the first upload, retaining
+  path security and individual-file 404 behavior. Exercise upload/download and
+  real handheld menu selection through public endpoint regressions.
+- Add opt-in, runtime-only Performance HUD with separate emulated/fresh/swap
+  rates, per-stage wall time and audio missing/dropped sample rates. No saved
+  settings change, quality reduction or claim that BRII performance is fixed.
+- Explain handheld art-server GB/GBC/GBA coverage and native manual PNG upload.
+  Current metadata has no PS1/PICO-8 paths; no new provider or art is bundled.
+- Preserve test.6 provenance, core binaries, PICO-8/brightness and user data.
+  Local candidate only; no SD update or publication is authorised by bug reports.
+
+### Local combined follow-up — stock-tsp-0.3.0-test.6
+
+- Include the GameBit platform-art correction and preserve working test.4
+  PICO-8/brightness fixes, core binaries, settings and saved data.
+- Native Default bezels use original grey disc/vent and teal/coral pixel
+  side panels, without imported art or marks. Native custom textures now use
+  the actual panel dimensions rather than a 720×480 intermediate crop.
+- Supply PCSX's documented GPU-thread `auto` default, previously absent from
+  the host preset. Dynarec/NEON were already present. No quality/timing hacks,
+  rewind change, clock/voltage adjustment or core rebuild. Host validation is
+  not proof of TSP speed or a Bloody Roar II audio-starvation fix.
+
+### Local follow-up — stock-tsp-0.3.0-test.5
+
+- GameBit PS1 uses a neutral square sleeve; PICO-8 uses a portrait virtual
+  card. Supplied labels retain their aspect and edges rather than entering a
+  GBA mould. Defaults use original geometry and text, without borrowed logos
+  or game art. Native shelf images and other platforms remain unchanged.
+- Owner reports PICO-8 and brightness good after test.4; this does not accept
+  all save-state paths, OSD reliability or sleep/wake. Keep its working fixes.
+- Optimised ARM64 host comparisons include snapshot/compression work and a
+  simulated 48 kHz consumer. They do not reproduce the severe handheld audio
+  starvation. Bloody Roar II remains unresolved; no speculative settings or
+  performance correction, imported bezel replacement or SD write is included.
+
+### Local follow-up — stock-tsp-0.3.0-test.4
+
+- Reproduce the PICO-8 exit/resume heap corruption with the affected cart and
+  an authored real-core regression. Pause staged Lua collection until Eris
+  finishes linking restored prototypes; retain allocation bounds and rollback.
+- Extend the Slot contract through manual save/load, fresh resume and repeated
+  Exit Game/shelf/reinsert. Old core crashes; corrected Mac and ARM64 checks pass.
+- Stock brightness uses TG5040 LCD ioctl readback/adjustment instead of an
+  unconditional Unavailable row. No startup writes, saved-level replay or
+  software dimming; volume stays firmware-owned and Knulli is unchanged.
+- Installed with owner approval, verified backup/readback and safe eject.
+  Owner later reports PICO-8 and brightness good, without broad reliability
+  acceptance. Core fingerprints differ; retain prior snapshots and separate
+  cartdata. Bloody Roar II remains unresolved. No bezel assets replaced,
+  publication or changes to stable/test.3 artifacts.
+
+### Combined follow-up — stock-tsp-0.3.0-test.3
+
+- PS1/PICO-8 art uses existing label upload and cartridge rendering. GameBit
+  exposes both platform libraries and custom bezel management.
+- Independent native Bezel choices: None, procedural Default and custom PNG.
+  Borders draw behind native video without cropping it or changing its aspect.
+- Pinned fake-08 serialization repair: full Lua gameplay, VM/audio/input/timing,
+  versioned build-specific state container, bounded payloads and staged restore
+  with propagated errors. Quick save and resume pass real-core and fresh Slot
+  reopen on macOS/ARM64; cartdata remains independent. Rewind stays disabled.
+  Legacy/imported states, oversized Lua and custom persistence/finalizers are
+  unsupported. Noise audio uses a restorable PRNG instead of libc randomness.
+- Stock TSP hardware volume/brightness ownership is explicit. Slot no longer
+  adds its own volume/mute gain or reports saved brightness as hardware state.
+  Its brightness row is Unavailable; nonstock controls/preferences are retained.
+  No mixer/display write or hardware acceptance is claimed. Colour effects
+  remain software shaders, not hardware calibration.
+- Frozen test.2 and stable 0.2 assets remain unchanged. No new SD update or
+  publication until the combined packaging and verification gates complete.
+
+### Unreleased two-core test candidate — stock-tsp-0.3.0-test.2
+
+- RomM download progress: received bytes, HTTP total and percentage when known,
+  explicit unknown-total state otherwise, separate installation and terminal
+  states, cancellation and retry. Coalesced snapshots keep the UI responsive.
+- Detect PICO-8 cart encoding from content, not the `.p8` extension. The local
+  RomM library's PNG-encoded `.p8` files no longer fail text-cart validation.
+  Empty, HTML, malformed and wrong-size images still fail validation.
+
+- PCSX ReARMed PS1 and fake-08 PICO-8 native shelves, video/timing/audio,
+  full-path loading and isolated per-game saves. Existing GB paths are retained.
+- PS1 Digital/DualShock, independent sticks and face/shoulder buttons, existing
+  mapper, disc selection and bounded CUE/M3U paths. No physical L3/R3 or rumble
+  support is claimed. PCSX state streams are bounded and CUE siblings take
+  priority over unrelated working-directory tracks.
+- fake-08 cart-data persistence only. Quick states, rewind and automatic state
+  resume are disabled; old state files are left untouched.
+- RomM PS1 single-file CHD/PBP and PICO-8 text/PNG carts route to native shelves.
+  Multi-file disc downloads and arbitrary PNG artwork remain unsupported.
+- Includes the 7d14cc6 fork baseline and existing 0f48680 Wi-Fi correction.
+  Host real-core save/reopen and format tests use authored content, not a
+  commercial ROM or BIOS. Handheld gameplay, speed, real BIOS and Power-button
+  Wi-Fi acceptance remain pending. Stable 0.2.0 assets are unchanged.
+
 ### Stock TSP 0.2.0 — RomM & Wi-Fi wake correction
 
 Released [stock-tsp-0.2.0](https://github.com/jellydn/slot-tsp/releases/tag/stock-tsp-0.2.0)
