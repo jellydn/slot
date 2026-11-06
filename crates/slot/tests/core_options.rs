@@ -354,7 +354,7 @@ fn mgba_answers_the_game_boy_player_logo_except_for_gba_video() {
 #[test]
 fn every_frame_blending_slot_sets_is_one_the_core_declares() {
     let _g = common::core_lock();
-    for which in Core::ALL {
+    for which in [Core::Mgba, Core::Gpsp, Core::Gambatte] {
         let path = dylib_for(which);
         if !path.exists() {
             eprintln!("no {} dylib on this host, skipping", which.as_str());
@@ -369,7 +369,8 @@ fn every_frame_blending_slot_sets_is_one_the_core_declares() {
                 &core,
                 &format!("{} blending={blending:?}", which.as_str()),
             );
-            let (key, value) = slot::core::blend_option(which, blending);
+            let (key, value) =
+                slot::core::blend_option(which, blending).expect("Game Boy blending");
             assert!(
                 core.options().iter().any(|(k, v)| k == key && v == value),
                 "{} was never told {key}={value} for {blending:?}",
@@ -481,7 +482,8 @@ fn frames_with_mix_set_at(which: Core, at: Option<usize>) -> Vec<Vec<u8>> {
     let mut frames = Vec::new();
     for i in 0..PRESENTS {
         if at == Some(i) {
-            let (key, value) = slot::core::blend_option(which, Blending::Mix);
+            let (key, value) =
+                slot::core::blend_option(which, Blending::Mix).expect("Game Boy blending");
             emu.set_option(key, value);
         }
         emu.tick(PANEL);
@@ -502,7 +504,7 @@ fn frames_with_mix_set_at(which: Core, at: Option<usize>) -> Vec<Vec<u8>> {
 #[test]
 fn a_frame_blending_change_reaches_a_running_core_without_a_reload() {
     let _g = common::core_lock();
-    for which in Core::ALL {
+    for which in [Core::Mgba, Core::Gpsp, Core::Gambatte] {
         if !dylib_for(which).exists() {
             eprintln!("no {} dylib on this host, skipping", which.as_str());
             continue;

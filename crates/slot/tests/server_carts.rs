@@ -167,6 +167,84 @@ fn cart_is_served_as_an_image() {
 }
 
 #[test]
+fn native_platform_carts_contain_supplied_art_without_a_gba_mould() {
+    let (dir, server) = start();
+    // Independent expected bounds: a 2:1 insert in the square sleeve and a
+    // 160:205 cart in the portrait sleeve, both centred without cropping.
+    for (tag, ext, sw, sh, w, h, left, top, aw, ah) in [
+        ("PS", "chd", 80u32, 40u32, 320u32, 320u32, 12, 74, 296, 148),
+        ("PICO8", "p8", 160, 205, 320, 410, 43, 44, 233, 298),
+    ] {
+        put(dir.path(), &format!("Games/{tag}/Alpha.{ext}"), b"rom");
+        let url = cart_url(server.port(), tag, 0);
+        let (status, _, body) = get(server.port(), &url);
+        assert_eq!(status, 200);
+        let (dw, dh, fallback) = decode(&body);
+        assert_eq!((dw, dh), (w, h), "wrong {tag} representation");
+        for y in 44..h - 68 {
+            for x in 12..w - 12 {
+                let at = ((y * w + x) * 4) as usize;
+                assert_eq!(
+                    &fallback[at..at + 4],
+                    &[39, 43, 50, 255],
+                    "{tag} fallback must have no game art or borrowed branding"
+                );
+            }
+        }
+        for (top, height) in [(8, 28), (h - 56, 44)] {
+            assert!(
+                (top..top + height).any(|y| (12..w - 12).any(|x| {
+                    let at = ((y * w + x) * 4) as usize;
+                    fallback[at..at + 3] != [39, 43, 50]
+                })),
+                "{tag} platform or title is missing"
+            );
+        }
+
+        let colours = [
+            [255, 0, 0, 255],
+            [0, 255, 0, 255],
+            [0, 0, 255, 255],
+            [255, 255, 0, 255],
+        ];
+        let mut art = Vec::new();
+        for y in 0..sh {
+            for x in 0..sw {
+                art.extend_from_slice(
+                    &colours[((y >= sh / 2) as usize) * 2 + (x >= sw / 2) as usize],
+                );
+            }
+        }
+        let mut png = Vec::new();
+        let mut enc = png::Encoder::new(&mut png, sw, sh);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.write_header().unwrap().write_image_data(&art).unwrap();
+        put(dir.path(), &format!("Labels/{tag}/Alpha.{ext}.png"), &png);
+        let next = cart_url(server.port(), tag, 0);
+        assert_ne!(url, next);
+        let (status, head, body) = get(server.port(), &next);
+        assert_eq!(status, 200);
+        assert!(head.contains("immutable"));
+        let (dw, dh, rgba) = decode(&body);
+        assert_eq!((dw, dh), (w, h));
+        assert_ne!(rgba, fallback);
+        for y in 0..ah {
+            for x in 0..aw {
+                let src = (((y * sh / ah) * sw + x * sw / aw) * 4) as usize;
+                let dst = (((top + y) * w + left + x) * 4) as usize;
+                assert_eq!(
+                    &rgba[dst..dst + 4],
+                    &art[src..src + 4],
+                    "{tag} art was cropped or changed at {x},{y}"
+                );
+            }
+        }
+    }
+    server.stop();
+}
+
+#[test]
 fn an_old_key_is_not_cached_forever() {
     let (dir, server) = start();
     put(dir.path(), "Games/GBA/Alpha.gba", b"rom");

@@ -507,6 +507,7 @@ const UPDATE_BLINK_MS: Millis = 400;
 
 pub struct App {
     phase: Phase,
+    performance: bool,
     shelves: Vec<(Rack, Shelf)>,
     shelf_at: usize,
     orphaned: Vec<TexId>,
@@ -574,6 +575,9 @@ pub struct App {
     palette_live: bool,
     palette_pending: Option<GbColors>,
     sunlight_manual: Option<u8>,
+    ps_disc: u32,
+    ps_discs: u32,
+    disc_pending: Option<u32>,
     link_player: Option<u8>,
     platform: Platform,
     named_core: bool,
@@ -594,7 +598,7 @@ pub struct App {
     quick_romm_faces: [Option<[(TexId, u32, u32); 2]>; 4],
     pub romm: crate::romm::RommConf,
     quick_palette_faces: Option<[(TexId, u32, u32); 2]>,
-    quick_bezel_faces: [Option<[(TexId, u32, u32); 2]>; 3],
+    quick_bezel_faces: [Option<[(TexId, u32, u32); 2]>; 5],
     game_bezel: Option<TexId>,
     bezel_column: Vec<u8>,
     in_game_menu: Option<QuickRow>,
@@ -953,6 +957,7 @@ impl App {
             shot_tick_face: None,
             delete_shot_text: None,
             phase: Phase::Shelf,
+            performance: false,
             shelves,
             shelf_at,
             orphaned: Vec::new(),
@@ -1020,6 +1025,9 @@ impl App {
             palette_live: false,
             palette_pending: None,
             sunlight_manual: None,
+            ps_disc: 0,
+            ps_discs: 0,
+            disc_pending: None,
             link_player: None,
             platform: Platform::default(),
             named_core: false,
@@ -1040,7 +1048,7 @@ impl App {
             quick_romm_faces: [None; 4],
             romm: crate::romm::RommConf::default(),
             quick_palette_faces: None,
-            quick_bezel_faces: [None, None, None],
+            quick_bezel_faces: [None; 5],
             game_bezel: None,
             bezel_column: Vec::new(),
             in_game_menu: None,
@@ -1474,9 +1482,13 @@ impl App {
         self.in_game_menu
     }
 
+    pub fn performance(&self) -> bool {
+        self.performance
+    }
+
     pub fn in_game_hidden(&self) -> Vec<QuickRow> {
         let no_bezel = self.playing_platform().hardware() == Platform::Gba && !self.framed_panel();
-        let mut hidden = Vec::new();
+        let mut hidden = self.platform_hidden();
         if !self.palette_live {
             hidden.push(QuickRow::Palette);
         }
@@ -1492,16 +1504,13 @@ impl App {
         if self.single_cart() {
             hidden.push(QuickRow::ExitGame);
         }
-        if self.playing_platform().hardware() != Platform::Gba {
-            hidden.extend([QuickRow::GameL, QuickRow::GameR]);
-        }
         if !self.left_stick {
             hidden.push(QuickRow::LeftStick);
         }
         if !self.state.turbo {
             hidden.extend([QuickRow::GameTurboA, QuickRow::GameTurboB]);
         }
-        if !self.has_states || self.link_active() {
+        if !self.has_states || self.link_active() || !self.supports_states() {
             hidden.push(QuickRow::States);
         }
         if !self.has_shots || self.link_active() {
@@ -1618,7 +1627,22 @@ impl App {
     }
 
     pub fn quick_value(&self, row: QuickRow) -> Option<QuickValue> {
+        if self.playing_platform().native()
+            && matches!(
+                row,
+                QuickRow::Shader | QuickRow::ColourCorrection | QuickRow::Scale
+            )
+        {
+            return None;
+        }
         match row {
+            QuickRow::Performance => Some(QuickValue::flag(self.performance)),
+            QuickRow::PsController => Some(if self.state.ps_dualshock {
+                QuickValue::DualShock
+            } else {
+                QuickValue::Digital
+            }),
+            QuickRow::PsDisc => Some(QuickValue::level((self.ps_disc + 1).min(15) as u8)),
             QuickRow::Shader
             | QuickRow::ColourCorrection
             | QuickRow::PlayBrightness
@@ -1667,10 +1691,18 @@ impl App {
             QuickRow::GbcShader => Some(shader_value(self.state.shader_gbc)),
             QuickRow::Rumble => Some(QuickValue::flag(self.state.rumble)),
             QuickRow::LeftStick => Some(QuickValue::flag(self.state.left_stick_dpad)),
+            QuickRow::Rewind if self.playing_platform() == Platform::Pico8 => {
+                Some(QuickValue::Unavailable)
+            }
+            QuickRow::AutoLoad | QuickRow::EjectSave | QuickRow::Rewind
+                if !self.supports_states() =>
+            {
+                Some(QuickValue::Unavailable)
+            }
             QuickRow::AutoLoad => Some(QuickValue::flag(self.state.auto_load)),
             QuickRow::EjectSave => Some(QuickValue::flag(self.state.eject_save)),
             QuickRow::Turbo => Some(QuickValue::flag(self.state.turbo)),
-            QuickRow::Rewind => Some(QuickValue::flag(self.state.rewind)),
+            QuickRow::Rewind => Some(QuickValue::flag(self.records_rewind())),
             QuickRow::Recents => Some(if self.state.show_recents {
                 QuickValue::Show
             } else {
@@ -1764,6 +1796,10 @@ impl App {
             | QuickRow::GameR
             | QuickRow::GameTurboA
             | QuickRow::GameTurboB
+            | QuickRow::GameX
+            | QuickRow::GameY
+            | QuickRow::GameL2
+            | QuickRow::GameR2
             | QuickRow::ScSave
             | QuickRow::ScLoad
             | QuickRow::ScScreenshot
@@ -1854,7 +1890,7 @@ impl App {
         if platform.hardware() != Platform::Gba {
             choices.push(BezelPick::Default);
         }
-        if self.framed_panel() {
+        if self.framed_panel() && !platform.native() {
             choices.push(BezelPick::Ags102);
         }
         let scale = self.resolved_scale(platform);
@@ -1872,6 +1908,8 @@ impl App {
             Platform::Gba | Platform::Gbav => &mut self.state.bezel_gba,
             Platform::Gb => &mut self.state.bezel_gb,
             Platform::Gbc => &mut self.state.bezel_gbc,
+            Platform::Ps => &mut self.state.bezel_ps,
+            Platform::Pico8 => &mut self.state.bezel_pico8,
         }
     }
 
@@ -1880,6 +1918,8 @@ impl App {
             Platform::Gba | Platform::Gbav => &self.state.bezel_gba,
             Platform::Gb => &self.state.bezel_gb,
             Platform::Gbc => &self.state.bezel_gbc,
+            Platform::Ps => &self.state.bezel_ps,
+            Platform::Pico8 => &self.state.bezel_pico8,
         };
         let choices = self.bezel_choices(platform);
         if choices.contains(pick) {
@@ -1959,6 +1999,9 @@ impl App {
     }
 
     pub fn bezel_art(&self) -> Option<BezelArt> {
+        if self.playing_platform().native() {
+            return Some(BezelArt::Default);
+        }
         if self.picture_fills() {
             return None;
         }
@@ -2109,7 +2152,7 @@ impl App {
             self.state.wallpaper,
             WallpaperPick::File(_) | WallpaperPick::Random | WallpaperPick::Shelf
         );
-        let mut hidden = Vec::new();
+        let mut hidden = self.platform_hidden();
         if !self.stock_power_owned {
             hidden.push(QuickRow::DeviceSettings);
         }
@@ -2163,6 +2206,39 @@ impl App {
         }
         if self.romm.protocol == crate::romm::Protocol::Http {
             hidden.push(QuickRow::RommSelfSigned);
+        }
+        hidden
+    }
+
+    fn platform_hidden(&self) -> Vec<QuickRow> {
+        let platform = self.playing_platform();
+        let mut hidden: Vec<_> = QuickRow::CONTROLS
+            .into_iter()
+            .filter(|row| {
+                row.game_button()
+                    .is_some_and(|g| !GameButton::of(platform).contains(&g))
+            })
+            .collect();
+        if platform != Platform::Ps {
+            hidden.push(QuickRow::PsController);
+        }
+        if platform != Platform::Ps || self.ps_discs < 2 {
+            hidden.push(QuickRow::PsDisc);
+        }
+        if platform.native() {
+            hidden.extend([
+                QuickRow::Turbo,
+                QuickRow::LeftStick,
+                QuickRow::Shader,
+                QuickRow::ColourCorrection,
+                QuickRow::Palette,
+                QuickRow::Blending,
+                QuickRow::Scale,
+                QuickRow::Stretch,
+            ]);
+        }
+        if platform == Platform::Pico8 {
+            hidden.extend([QuickRow::Rewind, QuickRow::ScRewind]);
         }
         hidden
     }
@@ -2465,6 +2541,7 @@ impl App {
             Platform::Gba | Platform::Gbav => self.state.scale_gba,
             Platform::Gb => self.state.scale_gb,
             Platform::Gbc => self.state.scale_gbc,
+            Platform::Ps | Platform::Pico8 => Scale::default(),
         }
     }
 
@@ -2472,7 +2549,7 @@ impl App {
         match platform {
             Platform::Gb => self.state.stretch_gb,
             Platform::Gbc => self.state.stretch_gbc,
-            Platform::Gba | Platform::Gbav => Stretch::Classic,
+            Platform::Gba | Platform::Gbav | Platform::Ps | Platform::Pico8 => Stretch::Classic,
         }
     }
 
@@ -2591,6 +2668,9 @@ impl App {
     }
 
     fn cycle_scale(&mut self, platform: Platform, right: bool) {
+        if platform.native() {
+            return;
+        }
         let choices = self.scale_choices(platform);
         let at = choices
             .iter()
@@ -2606,10 +2686,14 @@ impl App {
             Platform::Gba | Platform::Gbav => self.state.scale_gba = to,
             Platform::Gb => self.state.scale_gb = to,
             Platform::Gbc => self.state.scale_gbc = to,
+            Platform::Ps | Platform::Pico8 => {}
         }
     }
 
     fn cycle_stretch(&mut self, platform: Platform, right: bool) {
+        if platform.native() {
+            return;
+        }
         let choices = self.stretch_choices(platform);
         let Some(at) = choices
             .iter()
@@ -2630,6 +2714,9 @@ impl App {
     }
 
     pub fn picture_fills(&self) -> bool {
+        if self.playing_platform().native() {
+            return false;
+        }
         match self.playing_platform().hardware() {
             Platform::Gba => self.picture().0 == Sizing::Panel && self.game_layout().panel,
             _ => self.video_mode == VideoMode::Stretch,
@@ -2741,6 +2828,7 @@ impl App {
             &self.shortcuts,
             &self.carousel,
             self.state.turbo,
+            self.playing_platform(),
         )
     }
 
@@ -2975,15 +3063,20 @@ impl App {
     }
 
     pub fn may_rewind(&self) -> bool {
-        self.state.rewind && !self.link_active()
+        self.records_rewind() && !self.link_active()
     }
 
     pub fn turbo(&self) -> bool {
-        self.state.turbo
+        self.state.turbo && !self.playing_platform().native()
     }
 
     pub fn records_rewind(&self) -> bool {
-        self.state.rewind
+        let enabled = match self.playing_platform() {
+            Platform::Ps => self.state.rewind_ps,
+            Platform::Pico8 => false,
+            _ => self.state.rewind,
+        };
+        enabled && self.supports_states()
     }
 
     pub fn picture_rect(&self) -> [f32; 4] {
@@ -2994,7 +3087,11 @@ impl App {
     }
 
     pub fn may_load_state(&self) -> bool {
-        !self.link_active()
+        !self.link_active() && self.supports_states()
+    }
+
+    fn supports_states(&self) -> bool {
+        self.snapshot.as_ref().is_none_or(|s| s.supports_states())
     }
 
     pub fn may_fast_forward(&self) -> bool {
@@ -3150,7 +3247,24 @@ impl App {
     }
 
     pub fn left_stick_dpad(&self) -> bool {
-        self.left_stick && self.state.left_stick_dpad
+        self.left_stick && self.state.left_stick_dpad && self.playing_platform() != Platform::Ps
+    }
+
+    pub fn ps_controller(&self) -> slot_retro::Controller {
+        if self.state.ps_dualshock {
+            slot_retro::Controller::DualShock
+        } else {
+            slot_retro::Controller::Digital
+        }
+    }
+
+    pub fn set_disc_info(&mut self, count: u32, selected: u32) {
+        self.ps_discs = count;
+        self.ps_disc = selected;
+    }
+
+    pub fn take_disc(&mut self) -> Option<u32> {
+        self.disc_pending.take()
     }
 
     pub fn ff_speed(&self) -> u8 {
@@ -3182,6 +3296,7 @@ impl App {
             Platform::Gba | Platform::Gbav => self.gba_shader(),
             Platform::Gb => self.state.shader_gb,
             Platform::Gbc => self.state.shader_gbc,
+            Platform::Ps | Platform::Pico8 => Shader::Off,
         }
     }
 
@@ -3198,6 +3313,7 @@ impl App {
             Platform::Gba | Platform::Gbav => self.state.colour_correction_gba,
             Platform::Gb => self.state.colour_correction_gb,
             Platform::Gbc => self.state.colour_correction_gbc,
+            Platform::Ps | Platform::Pico8 => false,
         }
     }
 
@@ -3206,6 +3322,7 @@ impl App {
             Platform::Gba | Platform::Gbav => self.state.blending_gba,
             Platform::Gb => self.state.blending_gb,
             Platform::Gbc => self.state.blending_gbc,
+            Platform::Ps | Platform::Pico8 => Blending::Off,
         }
     }
 
@@ -3857,6 +3974,7 @@ impl App {
 
     fn open_quick_row(&mut self, row: QuickRow) {
         match row {
+            QuickRow::Performance => self.change_setting(row, true),
             QuickRow::DateTime => {
                 self.phase = clock_screen(self.utc_secs(), &self.state, self.has_saved(), true);
             }
@@ -3994,6 +4112,12 @@ impl App {
             | QuickRow::GameR
             | QuickRow::GameTurboA
             | QuickRow::GameTurboB
+            | QuickRow::GameX
+            | QuickRow::GameY
+            | QuickRow::GameL2
+            | QuickRow::GameR2
+            | QuickRow::PsController
+            | QuickRow::PsDisc
             | QuickRow::ScSave
             | QuickRow::ScLoad
             | QuickRow::ScScreenshot
@@ -4021,6 +4145,35 @@ impl App {
     }
 
     fn change_setting(&mut self, row: QuickRow, right: bool) {
+        if row == QuickRow::Performance {
+            self.performance = !self.performance;
+            return;
+        }
+        if row == QuickRow::PsDisc {
+            if self.playing_platform() == Platform::Ps && self.ps_discs > 1 {
+                self.disc_pending = Some(if right {
+                    (self.ps_disc + 1) % self.ps_discs
+                } else {
+                    (self.ps_disc + self.ps_discs - 1) % self.ps_discs
+                });
+            }
+            return;
+        }
+        if matches!(
+            row,
+            QuickRow::AutoLoad | QuickRow::EjectSave | QuickRow::Rewind
+        ) && !self.supports_states()
+        {
+            return self.refuse();
+        }
+        if row == QuickRow::Rewind && self.playing_platform() == Platform::Pico8 {
+            return self.refuse();
+        }
+        if row == QuickRow::Rewind && self.playing_platform() == Platform::Ps {
+            self.state.rewind_ps = !self.state.rewind_ps;
+            self.persist();
+            return;
+        }
         match row {
             QuickRow::RommProtocol => {
                 self.romm.protocol = match self.romm.protocol {
@@ -4106,11 +4259,12 @@ impl App {
             self.persist();
             return;
         }
-        if let QuickRow::GbaBezel | QuickRow::GbBezel | QuickRow::GbcBezel = row {
+        if let QuickRow::GbaBezel | QuickRow::GbBezel | QuickRow::GbcBezel | QuickRow::Bezel = row {
             let platform = match row {
                 QuickRow::GbaBezel => Platform::Gba,
                 QuickRow::GbBezel => Platform::Gb,
-                _ => Platform::Gbc,
+                QuickRow::GbcBezel => Platform::Gbc,
+                _ => self.playing_platform(),
             };
             self.cycle_bezel(platform, right);
             self.persist();
@@ -4154,6 +4308,7 @@ impl App {
         let gba_shaders = self.gba_shaders();
         let s = &mut self.state;
         match row {
+            QuickRow::PsController => s.ps_dualshock = !s.ps_dualshock,
             QuickRow::FastForward => {
                 let to = ff_next(s.ff_speed, right);
                 if to == s.ff_speed {
@@ -4215,7 +4370,8 @@ impl App {
             }
             QuickRow::Theme => s.appearance = s.appearance.toggle(),
             QuickRow::WallpaperTint => s.wallpaper_tint = s.wallpaper_tint.step(right),
-            QuickRow::ScreenGeneral
+            QuickRow::Performance
+            | QuickRow::ScreenGeneral
             | QuickRow::Brightness
             | QuickRow::BlueLight
             | QuickRow::Saturation
@@ -4284,6 +4440,11 @@ impl App {
             | QuickRow::GameR
             | QuickRow::GameTurboA
             | QuickRow::GameTurboB
+            | QuickRow::GameX
+            | QuickRow::GameY
+            | QuickRow::GameL2
+            | QuickRow::GameR2
+            | QuickRow::PsDisc
             | QuickRow::ScSave
             | QuickRow::ScLoad
             | QuickRow::ScScreenshot
@@ -4334,6 +4495,9 @@ impl App {
     }
 
     fn step_shader(&mut self, right: bool) {
+        if self.playing_platform().native() {
+            return;
+        }
         if !matches!(self.phase, Phase::Inserting { .. } | Phase::Playing { .. }) {
             return;
         }
@@ -4342,6 +4506,7 @@ impl App {
             Platform::Gba | Platform::Gbav => (&mut self.state.shader_gba, gba_shaders),
             Platform::Gb => (&mut self.state.shader_gb, &Shader::GB[..]),
             Platform::Gbc => (&mut self.state.shader_gbc, &Shader::GB[..]),
+            Platform::Ps | Platform::Pico8 => return,
         };
         *shader = shader.step(choices, right);
         let said = match *shader {
@@ -4395,6 +4560,7 @@ impl App {
                 Platform::Gba | Platform::Gbav => QuickRow::GbaColourCorrection,
                 Platform::Gb => QuickRow::GbColourCorrection,
                 Platform::Gbc => QuickRow::GbcColourCorrection,
+                Platform::Ps | Platform::Pico8 => return true,
             };
             self.change_setting(row, true);
             let said = match self.colour_correction() {
@@ -4795,7 +4961,7 @@ impl App {
     }
 
     pub fn game_bezel_size(&self) -> (u32, u32) {
-        match slot_gfx::framed(self.panel) {
+        match self.playing_platform().native() || slot_gfx::framed(self.panel) {
             true => self.panel,
             false => (OUT_W, OUT_H),
         }
@@ -5217,12 +5383,24 @@ impl App {
     }
 
     pub fn on_core_failed(&mut self) {
+        if self.playing_platform().native() {
+            self.hud.toast(Toast::GameFailed, self.now());
+        }
         let caught = self.seat();
         let Phase::Inserting { cart, .. } = &mut self.phase else {
             return;
         };
         let cart = std::mem::take(cart);
         self.refuse_out(cart, caught);
+    }
+
+    pub fn on_core_unavailable(&mut self) {
+        self.on_core_failed();
+        self.hud.toast(Toast::CoreUnavailable, self.now());
+    }
+
+    pub fn disc_change_failed(&mut self) {
+        self.hud.toast(Toast::DiscFailed, self.now());
     }
 
     fn refuse_out(&mut self, cart: String, caught: f32) {
@@ -6385,11 +6563,15 @@ impl App {
         let (Some(root), Some(snapshot)) = (&self.root, &self.snapshot) else {
             return;
         };
-        let (state, sav) = match snapshot.state() {
-            Some(state) => trusted_write(snapshot.as_ref(), state, "eject"),
-            None => {
-                eprintln!("slot: eject: the core gave up no state");
-                (None, None)
+        let (state, sav) = if !snapshot.supports_states() {
+            (None, trusted_sav(snapshot.as_ref(), "eject"))
+        } else {
+            match snapshot.state() {
+                Some(state) => trusted_write(snapshot.as_ref(), state, "eject"),
+                None => {
+                    eprintln!("slot: eject: the core gave up no state");
+                    (None, None)
+                }
             }
         };
         let state = state.filter(|_| self.state.eject_save);
@@ -6541,7 +6723,10 @@ impl App {
         let seat =
             slot_store::core_for_platform(&root, &cart.stem, cart.platform, self.state.gb_core);
         let now = self.now();
-        let mut picker = CorePicker::open(Core::pair(cart.platform), seat, now);
+        let Some(pair) = Core::pair(cart.platform) else {
+            return;
+        };
+        let mut picker = CorePicker::open(pair, seat, now);
         if self.core_faces_ready() {
             picker.start(now);
         }
@@ -8250,7 +8435,7 @@ impl App {
             return;
         };
         let (scale, well) = match scene.cart.platform {
-            Platform::Gba | Platform::Gbav => (
+            Platform::Gba | Platform::Gbav | Platform::Ps | Platform::Pico8 => (
                 1.0,
                 [
                     slot_ui::LABEL_X,
@@ -9924,7 +10109,8 @@ impl App {
         self.hold_wifi();
         self.update_jobs.ask(UpdateJob::Install(r.clone()));
         self.update_busy = true;
-        let mut picker = CorePicker::open(Core::pair(Platform::Gba), Core::Mgba, self.now());
+        let mut picker =
+            CorePicker::open(Core::pair(Platform::Gba).unwrap(), Core::Mgba, self.now());
         picker.start(self.now());
         self.update_picker = Some(picker);
         self.update_seat_at = None;
@@ -10678,7 +10864,7 @@ impl App {
         else {
             return;
         };
-        let (state, sav, what) = if resume {
+        let (state, sav, what) = if resume && snapshot.supports_states() {
             let Some(state) = snapshot.state() else {
                 eprintln!("slot: autosave: the core gave up no state");
                 return;
@@ -10725,11 +10911,15 @@ impl App {
         else {
             return;
         };
-        let Some(state) = snapshot.state() else {
-            eprintln!("slot: flush: the core gave up no state");
-            return;
+        let (state, sav) = if snapshot.supports_states() {
+            let Some(state) = snapshot.state() else {
+                eprintln!("slot: flush: the core gave up no state");
+                return;
+            };
+            trusted_write(snapshot.as_ref(), state, "flush")
+        } else {
+            (None, trusted_sav(snapshot.as_ref(), "flush"))
         };
-        let (state, sav) = trusted_write(snapshot.as_ref(), state, "flush");
         let written = persist::flush(
             root,
             self.platform,
@@ -11089,13 +11279,16 @@ impl App {
     }
 
     fn reset_game(&mut self) {
-        if !self.may_load_state() {
+        if self.link_active() {
             return self.refuse();
         }
         let Some(snapshot) = &self.snapshot else {
             return;
         };
-        let prior = snapshot.state();
+        let prior = snapshot
+            .supports_states()
+            .then(|| snapshot.state())
+            .flatten();
         snapshot.reset();
         self.hud.toast(Toast::GameReset, self.now());
         if let Some(prior) = prior {
@@ -11156,6 +11349,9 @@ impl App {
     }
 
     fn save_state(&mut self) {
+        if !self.supports_states() {
+            return self.refuse();
+        }
         let (Some(ring), Some(snapshot)) = (self.ring(), &self.snapshot) else {
             return;
         };
@@ -11538,5 +11734,7 @@ fn bezel_slot(platform: Platform) -> usize {
         Platform::Gba | Platform::Gbav => 0,
         Platform::Gb => 1,
         Platform::Gbc => 2,
+        Platform::Ps => 3,
+        Platform::Pico8 => 4,
     }
 }

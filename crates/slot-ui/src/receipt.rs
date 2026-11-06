@@ -94,7 +94,8 @@ fn fitted(font: &fontdue::Font, text: &str, px: f32, fit_w: f32, min_px: f32) ->
 }
 
 fn fits(line: &str) -> bool {
-    text::label_font().is_none_or(|font| text::line_width(font, &line.to_uppercase(), MIN_PX, 0.0) <= FIT_W)
+    text::label_font()
+        .is_none_or(|font| text::line_width(font, &line.to_uppercase(), MIN_PX, 0.0) <= FIT_W)
 }
 
 fn raster(lines: &[Line], top: usize, w: usize, h: usize, fit_w: f32, min_px: f32) -> Vec<f32> {

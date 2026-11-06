@@ -8,8 +8,8 @@ use std::time::Instant;
 use slot_input::{Btn, InputSource, Millis, RawEvent};
 
 use super::evdev::{
-    decode, device_name, pad_map, pick_devices, to_raw, Ev, Hat, EVENT_BYTES, EV_ABS, EV_KEY,
-    EV_SYN,
+    decode, device_name, pad_map, pick_devices, to_raw, Ev, Hat, PadMap, TspAnalog, EVENT_BYTES,
+    EV_ABS, EV_KEY, EV_SYN,
 };
 use super::trace;
 
@@ -22,6 +22,7 @@ const LID_POLL_MS: Millis = 150;
 pub struct DeviceInput {
     pending: Arc<Mutex<Vec<RawEvent>>>,
     stick: Arc<AtomicBool>,
+    analog: Arc<Mutex<TspAnalog>>,
     hall: Option<PathBuf>,
     lid_shut: Option<bool>,
     next_lid_poll: Millis,
@@ -40,6 +41,7 @@ impl DeviceInput {
     fn open_traced(dev: &Path, sys: &Path, trace: Option<Arc<Trace>>) -> Self {
         let pending: Arc<Mutex<Vec<RawEvent>>> = Arc::new(Mutex::new(Vec::new()));
         let stick = Arc::new(AtomicBool::new(false));
+        let analog = Arc::new(Mutex::new(TspAnalog::default()));
         for node in pick_devices(dev, sys) {
             eprintln!(
                 "slot: input {} ({})",
@@ -52,9 +54,13 @@ impl DeviceInput {
             let steers = stick.clone();
             let name = node.display().to_string();
             let trace = trace.clone();
+            let analog = (pad_map() == PadMap::Tsp && device_name(sys, &node) == "TRIMUI Player1")
+                .then(|| analog.clone());
             let spawned = std::thread::Builder::new()
                 .name(format!("slot-input-{name}"))
-                .spawn(move || read_node(&node, &queue, &steers, trace.as_deref()));
+                .spawn(move || {
+                    read_node(&node, &queue, &steers, analog.as_deref(), trace.as_deref())
+                });
             if let Err(e) = spawned {
                 eprintln!("slot: input {name}: {e}");
             }
@@ -62,6 +68,7 @@ impl DeviceInput {
         DeviceInput {
             pending,
             stick,
+            analog,
             hall: find_hall(Path::new(PSY)),
             lid_shut: None,
             next_lid_poll: 0,
@@ -99,6 +106,7 @@ fn read_node(
     node: &Path,
     queue: &Mutex<Vec<RawEvent>>,
     steers: &AtomicBool,
+    analog: Option<&Mutex<TspAnalog>>,
     trace: Option<&Trace>,
 ) {
     let label = node
@@ -116,12 +124,12 @@ fn read_node(
     let mut buf = [0u8; EVENT_BYTES * 16];
     loop {
         let read = match file.read(&mut buf) {
-            Ok(0) => return,
+            Ok(0) => break,
             Ok(n) => n,
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(e) => {
                 eprintln!("slot: input {}: {e}", node.display());
-                return;
+                break;
             }
         };
         let mut events = Vec::new();
@@ -134,6 +142,9 @@ fn read_node(
             }
             match ev.kind {
                 EV_ABS => {
+                    if let Some(analog) = analog {
+                        events.extend(analog.lock().unwrap_or_else(|e| e.into_inner()).feed(ev));
+                    }
                     hat.steer_with_stick(steers.load(Ordering::Relaxed));
                     events.extend(hat.feed(ev));
                 }
@@ -147,6 +158,13 @@ fn read_node(
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .extend(events);
+    }
+    if let Some(analog) = analog {
+        *analog.lock().unwrap_or_else(|e| e.into_inner()) = TspAnalog::default();
+        queue
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .extend([RawEvent::Up(Btn::L2), RawEvent::Up(Btn::R2)]);
     }
 }
 
@@ -205,6 +223,13 @@ impl DeviceInput {
 }
 
 impl InputSource for DeviceInput {
+    fn analog_sticks(&self) -> [[i16; 2]; 2] {
+        self.analog
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .sticks()
+    }
+
     fn poll(&mut self, now: Millis) -> Vec<RawEvent> {
         let mut out = std::mem::take(&mut *self.pending.lock().unwrap_or_else(|e| e.into_inner()));
         if self.hall.is_some() && now >= self.next_lid_poll {

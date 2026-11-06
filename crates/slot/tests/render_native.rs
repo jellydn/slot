@@ -637,6 +637,128 @@ fn rgb(px: &[u8], w: u32, x: usize, y: usize) -> [u8; 3] {
     [px[o], px[o + 1], px[o + 2]]
 }
 
+#[test]
+fn native_frontend_bezels_keep_panel_edges_and_the_whole_picture() {
+    use slot_store::{BezelPick, Platform, SlotState};
+    let surface = HeadlessSurface::new().expect("native bezel test needs OpenGL");
+    let mut c = Compositor::new(&surface).unwrap();
+    let panel = (1280, 720);
+    for (platform, name, left, width, aspect) in [
+        (Platform::Ps, "Game.chd", 160, 320, 4.0 / 3.0),
+        (Platform::Pico8, "Game.p8", 280, 128, 1.0),
+    ] {
+        for (kind, pick) in [
+            ("default", BezelPick::Default),
+            ("none", BezelPick::None),
+            ("custom", BezelPick::File("Edge.png".into())),
+        ] {
+            let d = tempfile::tempdir().unwrap();
+            slot::root::ensure(d.path());
+            std::fs::write(
+                d.path().join("Games").join(platform.dir_name()).join(name),
+                b"fixture",
+            )
+            .unwrap();
+            let path = d
+                .path()
+                .join("Bezels")
+                .join(platform.dir_name())
+                .join("Edge.png");
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let mut background = [47, 57, 67, 255].repeat(1280 * 720);
+            for y in 0..720 {
+                for x in 0..1280 {
+                    if !(24..1256).contains(&x) || !(24..696).contains(&y) {
+                        let colour = if x < 640 {
+                            [191, 37, 59, 255]
+                        } else {
+                            [29, 173, 97, 255]
+                        };
+                        background[(y * 1280 + x) * 4..][..4].copy_from_slice(&colour);
+                    }
+                }
+            }
+            let mut e = png::Encoder::new(std::fs::File::create(path).unwrap(), 1280, 720);
+            e.set_color(png::ColorType::Rgba);
+            e.write_header()
+                .unwrap()
+                .write_image_data(&background)
+                .unwrap();
+            slot_store::write_slot_state(
+                d.path(),
+                &SlotState {
+                    cart: Some(name.into()),
+                    cart_platform: Some(platform),
+                    clock_set: true,
+                    bezel_ps: pick.clone(),
+                    bezel_pico8: pick,
+                    ..SlotState::default()
+                },
+            )
+            .unwrap();
+            let mut f = Frontend::boot_with(
+                Box::new(SimPlatform::at(d.path().to_path_buf())),
+                Box::new(slot::audio::StubSink::draining()),
+            );
+            f.app_mut().set_snapshot(common::StubSnapshot::boxed());
+            f.app_mut().on_core_ready();
+            f.app_mut().set_game_ready(true);
+            for _ in 0..180 {
+                f.app_mut().update(1.0 / 60.0);
+            }
+            f.upload_bezel(&mut c, panel);
+            c.fit(panel);
+            c.set_screen_effect(slot_gfx::ScreenEffect::None);
+            let mut picture = Vec::new();
+            for y in 0..width {
+                for x in 0..width {
+                    picture.extend_from_slice(&[
+                        if x < width / 2 { 211 } else { 73 },
+                        if y < width / 2 { 139 } else { 91 },
+                        37,
+                        255,
+                    ]);
+                }
+            }
+            assert!(c.upload_native_game(&picture, (width, width), aspect));
+            f.compose(&mut c);
+            let frame = c.read_frame();
+            write_png(
+                &format!("{}-frontend-bezel-{kind}", platform.dir_name()),
+                1280,
+                720,
+                &frame,
+            );
+            for (x, y, expected) in [(left, 0, [37, 139, 211]), (1279 - left, 719, [37, 91, 73])] {
+                assert_eq!(
+                    rgb(&frame, 1280, x, y),
+                    expected,
+                    "{platform:?} {kind}: picture corner"
+                );
+            }
+            if kind == "custom" {
+                for (x, y, colour) in [
+                    (0, 0, [191, 37, 59]),
+                    (23, 360, [191, 37, 59]),
+                    (24, 360, [47, 57, 67]),
+                    (1256, 360, [29, 173, 97]),
+                    (1279, 719, [29, 173, 97]),
+                ] {
+                    assert_eq!(
+                        rgb(&frame, 1280, x, y),
+                        colour,
+                        "{platform:?}: custom edge cropped"
+                    );
+                }
+            } else if kind == "none" {
+                assert_eq!(rgb(&frame, 1280, 0, 360), [0, 0, 0]);
+            } else {
+                assert_ne!(rgb(&frame, 1280, 50, 360), [0, 0, 0]);
+            }
+        }
+    }
+}
+
 fn plastic(p: [u8; 3]) -> bool {
     p.iter().all(|c| (0x14..0x80).contains(c))
 }

@@ -1,3 +1,5 @@
+mod common;
+
 use slot::server::{card_name, rename_via_temp, resolve, Server};
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpStream};
@@ -13,6 +15,11 @@ fn start() -> (tempfile::TempDir, Server) {
 }
 
 fn send(port: u16, raw: &[u8], close_write: bool) -> (u16, String) {
+    let (status, body) = send_bytes(port, raw, close_write);
+    (status, String::from_utf8_lossy(&body).into_owned())
+}
+
+fn send_bytes(port: u16, raw: &[u8], close_write: bool) -> (u16, Vec<u8>) {
     let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
     s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
     s.write_all(raw).unwrap();
@@ -27,9 +34,10 @@ fn send(port: u16, raw: &[u8], close_write: bool) -> (u16, String) {
         .nth(1)
         .and_then(|c| c.parse().ok())
         .unwrap_or(0);
-    let body = text
-        .split_once("\r\n\r\n")
-        .map(|(_, b)| b.to_string())
+    let body = out
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map(|at| out[at + 4..].to_vec())
         .unwrap_or_default();
     (status, body)
 }
@@ -68,6 +76,195 @@ fn upload(port: u16, target: &str, name: &str, data: &[u8]) -> (u16, String) {
 
 fn s(v: &[&str]) -> Vec<String> {
     v.iter().map(|x| x.to_string()).collect()
+}
+
+fn native_bezel_lifecycle(platform: slot_store::Platform, game: &str) {
+    use slot::app::App;
+    use slot_input::{Action, Btn};
+    use slot_store::{read_slot_state, write_slot_state, BezelPick, SlotState};
+    use slot_ui::QuickRow;
+
+    let (d, server) = start();
+    slot::root::ensure(d.path());
+    let tag = platform.dir_name();
+    let target = format!("/api/overlays/{tag}");
+    let dir = d.path().join("Bezels").join(tag);
+    assert!(!dir.exists());
+    for suffix in ["", "?recursive=true"] {
+        let (status, body) = call(server.port(), "GET", &format!("{target}{suffix}"), b"");
+        assert_eq!(status, 200, "{target}{suffix}: {body}");
+        let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(json["path"], format!("Bezels/{tag}"));
+        assert_eq!(json["entries"], serde_json::json!([]));
+    }
+    assert_eq!(
+        call(server.port(), "HEAD", &target, b""),
+        (200, String::new())
+    );
+    assert!(!dir.exists(), "listing must not create directories");
+    assert!(slot::bezel::list(d.path(), platform).is_empty());
+
+    let mut png = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut png, 2, 2);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder
+            .write_header()
+            .unwrap()
+            .write_image_data(&[0; 16])
+            .unwrap();
+    }
+    let (status, body) = upload(server.port(), &target, "Wood.png", &png);
+    assert_eq!(status, 200, "{body}");
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(json["files"], serde_json::json!(["Wood.png"]));
+    assert_eq!(std::fs::read(dir.join("Wood.png")).unwrap(), png);
+    let (status, body) = call(server.port(), "GET", &target, b"");
+    assert_eq!(status, 200, "{body}");
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        json["entries"],
+        serde_json::json!([
+            {"name": "Wood.png", "type": "file", "size": png.len()}
+        ])
+    );
+    let download = format!("{target}/Wood.png");
+    let raw = format!("GET {download} HTTP/1.1\r\nHost: x\r\nAuthorization: Basic {AUTH}\r\n\r\n");
+    let (status, bytes) = send_bytes(server.port(), raw.as_bytes(), false);
+    assert_eq!(status, 200);
+    assert_eq!(bytes, png);
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes))
+        .read_info()
+        .unwrap();
+    let mut pixels = vec![0; decoder.output_buffer_size()];
+    let frame = decoder.next_frame(&mut pixels).unwrap();
+    assert_eq!((frame.width, frame.height), (2, 2));
+
+    std::fs::write(d.path().join("Games").join(tag).join(game), b"fixture").unwrap();
+    write_slot_state(
+        d.path(),
+        &SlotState {
+            cart: Some(game.into()),
+            cart_platform: Some(platform),
+            clock_set: true,
+            ..SlotState::default()
+        },
+    )
+    .unwrap();
+    let mut app = App::boot(d.path());
+    app.set_snapshot(common::StubSnapshot::boxed());
+    app.on_core_ready();
+    for _ in 0..120 {
+        app.update(1.0 / 60.0);
+    }
+    assert_eq!(app.playing_platform(), platform);
+    assert_eq!(app.bezel_files(platform), ["Wood.png"]);
+    assert_eq!(app.resolved_bezel(platform), BezelPick::Default);
+    let press = |app: &mut App, btn| {
+        app.apply(Action::GbaDown(btn));
+        app.apply(Action::GbaUp(btn));
+    };
+    app.apply(Action::QuickMenu);
+    for row in [QuickRow::Settings, QuickRow::PlayScreen, QuickRow::Bezel] {
+        for _ in 0..12 {
+            if app.in_game_menu() == Some(row) {
+                break;
+            }
+            press(&mut app, Btn::Down);
+        }
+        assert_eq!(app.in_game_menu(), Some(row));
+        if row != QuickRow::Bezel {
+            press(&mut app, Btn::A);
+        }
+    }
+    press(&mut app, Btn::Right);
+    assert_eq!(
+        app.resolved_bezel(platform),
+        BezelPick::File("Wood.png".into())
+    );
+    let state = read_slot_state(d.path());
+    let (selected, other) = if platform == slot_store::Platform::Ps {
+        (state.bezel_ps, state.bezel_pico8)
+    } else {
+        (state.bezel_pico8, state.bezel_ps)
+    };
+    assert_eq!(selected, BezelPick::File("Wood.png".into()));
+    assert_eq!(other, BezelPick::Default);
+    assert_eq!(state.bezel_gba, BezelPick::Ags102);
+    assert_eq!(App::boot(d.path()).resolved_bezel(platform), selected);
+
+    assert_eq!(call(server.port(), "DELETE", &download, b"").0, 200);
+    assert!(app.bezel_files(platform).is_empty());
+    assert_eq!(app.resolved_bezel(platform), BezelPick::None);
+    let (status, body) = call(server.port(), "GET", &target, b"");
+    assert_eq!(status, 200);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&body).unwrap()["entries"],
+        serde_json::json!([])
+    );
+    assert_eq!(call(server.port(), "GET", &download, b"").0, 404);
+    server.stop();
+}
+
+#[test]
+fn ps_bezels_missing_directory_upload_download_and_handheld_selection() {
+    native_bezel_lifecycle(slot_store::Platform::Ps, "Game.chd");
+}
+
+#[test]
+fn pico8_bezels_missing_directory_upload_download_and_handheld_selection() {
+    native_bezel_lifecycle(slot_store::Platform::Pico8, "Game.p8");
+}
+
+#[test]
+fn missing_bezel_files_and_unknown_paths_stay_not_found() {
+    let (_d, server) = start();
+    for target in [
+        "/api/overlays/PS/missing.png",
+        "/api/overlays/PICO8/missing.png",
+        "/api/overlays/unknown",
+        "/api/overlays/PS/unknown",
+        "/api/overlays/PICO8/unknown",
+        "/api/unknown/PS",
+        "/api/fs/card/Bezels/PS",
+        "/api/roms/unknown",
+    ] {
+        for method in ["GET", "HEAD"] {
+            assert_eq!(
+                call(server.port(), method, target, b"").0,
+                404,
+                "{method} {target}"
+            );
+        }
+    }
+    server.stop();
+}
+
+#[cfg(unix)]
+#[test]
+fn missing_platform_bezel_collections_do_not_bypass_path_security() {
+    let (d, server) = start();
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::create_dir(d.path().join("Bezels")).unwrap();
+    for tag in ["PS", "PICO8"] {
+        std::os::unix::fs::symlink(outside.path(), d.path().join("Bezels").join(tag)).unwrap();
+        let target = format!("/api/overlays/{tag}");
+        for suffix in ["", "/missing.png", "/%2e%2e/unknown"] {
+            for method in ["GET", "HEAD"] {
+                assert_eq!(
+                    call(server.port(), method, &format!("{target}{suffix}"), b"").0,
+                    403
+                );
+            }
+        }
+        assert_eq!(
+            upload(server.port(), &target, "Wood.png", b"refused").0,
+            403
+        );
+        assert!(!outside.path().join("Wood.png").exists());
+    }
+    server.stop();
 }
 
 #[test]

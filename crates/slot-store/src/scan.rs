@@ -25,11 +25,12 @@ impl Cart {
                     self.code = code;
                 }
             }
-            _ => {
+            Platform::Gb | Platform::Gbc => {
                 if let Some(title) = crate::gb::title(&self.rom) {
                     self.title = title;
                 }
             }
+            _ => {}
         }
     }
 }
@@ -90,7 +91,7 @@ fn scan_of(root: &Path, platforms: &[Platform]) -> Result<Vec<Cart>, StoreError>
             if is_hidden(&rom) || !platform.accepts(&rom) || !is_file(&entry) {
                 continue;
             }
-            let Some(stem) = rom.file_stem().and_then(|s| s.to_str()) else {
+            let Some(stem) = platform.stem(&rom) else {
                 continue;
             };
             let label = labels
@@ -107,6 +108,21 @@ fn scan_of(root: &Path, platforms: &[Platform]) -> Result<Vec<Cart>, StoreError>
             });
         }
     }
+    let members: std::collections::HashSet<_> = carts
+        .iter()
+        .filter(|c| {
+            c.platform == Platform::Ps
+                && c.rom
+                    .extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("m3u"))
+        })
+        .filter_map(|c| crate::disc::contents(&root.join("Games/PS"), &c.rom).ok())
+        .flatten()
+        .filter_map(|path| path.canonicalize().ok())
+        .collect();
+    carts.retain(|c| {
+        c.platform != Platform::Ps || !c.rom.canonicalize().is_ok_and(|p| members.contains(&p))
+    });
     carts.sort_by(|a, b| {
         (a.platform as u8, sort_key(&a.stem)).cmp(&(b.platform as u8, sort_key(&b.stem)))
     });

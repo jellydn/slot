@@ -303,12 +303,14 @@ impl Blending {
             Core::Mgba => &Blending::MGBA,
             Core::Gpsp => &Blending::GPSP,
             Core::Gambatte => &Blending::MGBA,
+            Core::PcsxRearmed | Core::SwanStation | Core::Fake08 => &[Blending::Off],
         }
     }
 
     pub fn on(self, core: Core) -> Blending {
         match (core, self) {
             (Core::Gpsp, Blending::Ghosting) => Blending::Mix,
+            (Core::PcsxRearmed | Core::SwanStation | Core::Fake08, _) => Blending::Off,
             (_, blending) => blending,
         }
     }
@@ -366,6 +368,7 @@ pub struct SlotState {
     pub eject_save: bool,
     pub turbo: bool,
     pub rewind: bool,
+    pub rewind_ps: bool,
     pub gb_palettes: bool,
     pub gb_palette: GbPalette,
     pub appearance: Appearance,
@@ -376,10 +379,13 @@ pub struct SlotState {
     pub wifi_off: bool,
     pub gb_core: Core,
     pub left_stick_dpad: bool,
+    pub ps_dualshock: bool,
     pub lid_off_min: Option<u8>,
     pub bezel_gba: BezelPick,
     pub bezel_gb: BezelPick,
     pub bezel_gbc: BezelPick,
+    pub bezel_ps: BezelPick,
+    pub bezel_pico8: BezelPick,
     pub scale_gba: Scale,
     pub scale_gb: Scale,
     pub scale_gbc: Scale,
@@ -543,6 +549,7 @@ impl Default for SlotState {
             eject_save: true,
             turbo: true,
             rewind: true,
+            rewind_ps: false,
             gb_palettes: false,
             gb_palette: GbPalette::DEFAULT,
             appearance: Appearance::Dark,
@@ -553,10 +560,13 @@ impl Default for SlotState {
             wifi_off: false,
             gb_core: Core::Gambatte,
             left_stick_dpad: true,
+            ps_dualshock: false,
             lid_off_min: None,
             bezel_gba: BezelPick::Ags102,
             bezel_gb: BezelPick::Ags102,
             bezel_gbc: BezelPick::Ags102,
+            bezel_ps: BezelPick::Default,
+            bezel_pico8: BezelPick::Default,
             scale_gba: Scale::Fit,
             scale_gb: Scale::SpFrame,
             scale_gbc: Scale::SpFrame,
@@ -649,6 +659,7 @@ pub fn write_slot_state(root: &Path, s: &SlotState) -> std::io::Result<()> {
         s.appearance.name(),
         s.wallpaper.key()
     );
+    text.push_str(&format!("rewind_ps={}\n", s.rewind_ps as u8));
     text.push_str(&format!(
         "colour_correction_gbc={}\n",
         s.colour_correction_gbc as u8
@@ -665,6 +676,7 @@ pub fn write_slot_state(root: &Path, s: &SlotState) -> std::io::Result<()> {
     }
     text.push_str(&format!("gb_core={}\n", s.gb_core.as_str()));
     text.push_str(&format!("left_stick_dpad={}\n", s.left_stick_dpad as u8));
+    text.push_str(&format!("ps_dualshock={}\n", s.ps_dualshock as u8));
     text.push_str(&format!("auto_load={}\n", s.auto_load as u8));
     if let Some(min) = s.lid_off_min {
         text.push_str(&format!("lid_off_min={min}\n"));
@@ -672,6 +684,8 @@ pub fn write_slot_state(root: &Path, s: &SlotState) -> std::io::Result<()> {
     text.push_str(&format!("bezel_gba={}\n", s.bezel_gba.key()));
     text.push_str(&format!("bezel_gb={}\n", s.bezel_gb.key()));
     text.push_str(&format!("bezel_gbc={}\n", s.bezel_gbc.key()));
+    text.push_str(&format!("bezel_ps={}\n", s.bezel_ps.key()));
+    text.push_str(&format!("bezel_pico8={}\n", s.bezel_pico8.key()));
     text.push_str(&format!("scale_gba={}\n", s.scale_gba.name()));
     text.push_str(&format!("scale_gb={}\n", s.scale_gb.name()));
     text.push_str(&format!("scale_gbc={}\n", s.scale_gbc.name()));
@@ -725,6 +739,7 @@ fn parse(text: &str) -> Option<SlotState> {
     let mut eject_save = None;
     let mut turbo = None;
     let mut rewind = None;
+    let mut rewind_ps = None;
     let mut gb_palettes = None;
     let mut gb_palette = None;
     let mut appearance = None;
@@ -735,10 +750,13 @@ fn parse(text: &str) -> Option<SlotState> {
     let mut wifi_off = None;
     let mut gb_core = None;
     let mut left_stick_dpad = None;
+    let mut ps_dualshock = None;
     let mut lid_off_min = None;
     let mut bezel_gba = None;
     let mut bezel_gb = None;
     let mut bezel_gbc = None;
+    let mut bezel_ps = None;
+    let mut bezel_pico8 = None;
     let mut scale_gba = None;
     let mut scale_gb = None;
     let mut scale_gbc = None;
@@ -782,6 +800,7 @@ fn parse(text: &str) -> Option<SlotState> {
             "eject_save" => eject_save = flag(value),
             "turbo" => turbo = flag(value),
             "rewind" => rewind = flag(value),
+            "rewind_ps" => rewind_ps = flag(value),
             "gb_palettes" => gb_palettes = flag(value),
             "gb_palette" => gb_palette = GbPalette::parse(value),
             "appearance" => appearance = Appearance::parse(value),
@@ -792,10 +811,13 @@ fn parse(text: &str) -> Option<SlotState> {
             "wifi_off" => wifi_off = flag(value),
             "gb_core" => gb_core = Core::parse(value).filter(|c| c.runs(Platform::Gb)),
             "left_stick_dpad" => left_stick_dpad = flag(value),
+            "ps_dualshock" => ps_dualshock = flag(value),
             "lid_off_min" => lid_off_min = value.parse().ok().filter(|m| LID_OFF_MIN.contains(m)),
             "bezel_gba" => bezel_gba = Some(BezelPick::parse(value)),
             "bezel_gb" => bezel_gb = Some(BezelPick::parse(value)),
             "bezel_gbc" => bezel_gbc = Some(BezelPick::parse(value)),
+            "bezel_ps" => bezel_ps = Some(BezelPick::parse(value)),
+            "bezel_pico8" => bezel_pico8 = Some(BezelPick::parse(value)),
             "scale_gba" => scale_gba = Scale::parse(value),
             "scale_gb" => scale_gb = Scale::parse(value),
             "scale_gbc" => scale_gbc = Scale::parse(value),
@@ -849,6 +871,8 @@ fn parse(text: &str) -> Option<SlotState> {
         eject_save: eject_save.unwrap_or(fallback.eject_save),
         turbo: turbo.unwrap_or(fallback.turbo),
         rewind: rewind.unwrap_or(fallback.rewind),
+        // A legacy explicit global choice still applies until PS1 is changed separately.
+        rewind_ps: rewind_ps.or(rewind).unwrap_or(fallback.rewind_ps),
         gb_palettes: gb_palettes.unwrap_or(fallback.gb_palettes),
         gb_palette: gb_palette.unwrap_or(fallback.gb_palette),
         appearance: appearance.unwrap_or(fallback.appearance),
@@ -859,10 +883,13 @@ fn parse(text: &str) -> Option<SlotState> {
         wifi_off: wifi_off.unwrap_or(fallback.wifi_off),
         gb_core: gb_core.unwrap_or(Core::Mgba),
         left_stick_dpad: left_stick_dpad.unwrap_or(fallback.left_stick_dpad),
+        ps_dualshock: ps_dualshock.unwrap_or(fallback.ps_dualshock),
         lid_off_min,
         bezel_gba: bezel_gba.unwrap_or(fallback.bezel_gba),
         bezel_gb: bezel_gb.unwrap_or(fallback.bezel_gb),
         bezel_gbc: bezel_gbc.unwrap_or(fallback.bezel_gbc),
+        bezel_ps: bezel_ps.unwrap_or(fallback.bezel_ps),
+        bezel_pico8: bezel_pico8.unwrap_or(fallback.bezel_pico8),
         scale_gba: scale_gba.unwrap_or(fallback.scale_gba),
         scale_gb: scale_gb.unwrap_or(fallback.scale_gb),
         scale_gbc: scale_gbc.unwrap_or(fallback.scale_gbc),

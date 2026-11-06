@@ -423,6 +423,51 @@ fn abs(code: u16, value: i32) -> slot::input::evdev::Ev {
 }
 
 #[test]
+fn tsp_analog_keeps_both_sticks_separate_from_triggers_and_hat() {
+    let mut pad = slot::input::evdev::TspAnalog::default();
+    for (code, value) in [(0, -32767), (1, 12345), (3, 6789), (4, -23456)] {
+        assert_eq!(pad.feed(abs(code, value)), None);
+    }
+    assert_eq!(pad.sticks(), [[-32767, 12345], [6789, -23456]]);
+    assert_eq!(pad.feed(abs(2, 255)), Some(RawEvent::Down(Btn::L2)));
+    assert_eq!(pad.feed(abs(5, 255)), Some(RawEvent::Down(Btn::R2)));
+    assert_eq!(pad.feed(abs(2, 255)), None, "duplicate trigger press");
+    assert_eq!(pad.feed(abs(2, 0)), Some(RawEvent::Up(Btn::L2)));
+    assert_eq!(pad.feed(abs(5, 0)), Some(RawEvent::Up(Btn::R2)));
+    assert_eq!(pad.feed(abs(16, -1)), None);
+    assert_eq!(pad.feed(abs(17, 1)), None);
+    assert_eq!(pad.sticks(), [[-32767, 12345], [6789, -23456]]);
+    for code in [0, 1, 3, 4] {
+        pad.feed(abs(code, 0));
+    }
+    assert_eq!(pad.sticks(), [[0; 2]; 2]);
+}
+
+#[test]
+fn tsp_analog_uses_declared_ranges_and_neutral_deadzone_not_captured_extrema() {
+    let mut pad = slot::input::evdev::TspAnalog::default();
+    pad.feed(abs(0, -50000));
+    pad.feed(abs(1, 50000));
+    pad.feed(abs(3, -2048));
+    pad.feed(abs(4, 2048));
+    assert_eq!(pad.sticks(), [[-32767, 32767], [0, 0]]);
+    pad.feed(abs(3, -2049));
+    pad.feed(abs(4, 2049));
+    assert_eq!(pad.sticks(), [[-32767, 32767], [-2049, 2049]]);
+    assert_eq!(
+        pad.feed(slot::input::evdev::Ev {
+            kind: EV_KEY,
+            code: 2,
+            value: 255
+        }),
+        None
+    );
+    assert_eq!(pad.feed(abs(2, 127)), None);
+    assert_eq!(pad.feed(abs(2, 128)), Some(RawEvent::Down(Btn::L2)));
+    assert_eq!(pad.feed(abs(2, 127)), Some(RawEvent::Up(Btn::L2)));
+}
+
+#[test]
 fn the_left_stick_presses_the_d_pad_past_half_tilt() {
     let mut hat = slot::input::evdev::Hat::default();
     hat.steer_with_stick(true);

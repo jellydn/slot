@@ -69,6 +69,83 @@ fn frame_count(emu: &EmuHandle) -> u64 {
 }
 
 #[test]
+fn performance_counts_actual_steps_only_while_enabled_without_changing_playback() {
+    let emu = spawn();
+    emu.set_speed(Speed::Paused);
+    assert!(wait_for(|| emu.observed_speed() == Speed::Paused));
+    let before = frame_count(&emu);
+    assert_eq!(emu.performance().steps, 0);
+    emu.set_performance(true);
+    emu.set_speed(Speed::Normal);
+    assert!(wait_for(|| emu.performance().steps >= 4));
+    emu.set_speed(Speed::Paused);
+    assert!(wait_for(|| emu.observed_speed() == Speed::Paused));
+    let after = frame_count(&emu);
+    let measured = emu.performance();
+    assert_eq!(measured.steps, after - before);
+    assert!(measured.core_ns > 0 && measured.rewind_ns > 0);
+    assert!(measured.copy_ns > 0 && measured.audio_ns > 0);
+    emu.set_performance(false);
+    emu.set_speed(Speed::Normal);
+    assert!(wait_for(|| emu.published_count() > after + 2));
+    emu.set_speed(Speed::Paused);
+    assert!(wait_for(|| emu.observed_speed() == Speed::Paused));
+    assert_eq!(emu.performance().steps, measured.steps);
+    assert!(frame_count(&emu) > after);
+}
+
+#[test]
+fn performance_rates_separate_emulation_fresh_swaps_and_interleaved_audio_samples() {
+    use slot::performance::{lines, Totals};
+    let before = Totals {
+        steps: 100,
+        fresh: 80,
+        swaps: 200,
+        missed: 9,
+        core_ns: 100,
+        rewind_ns: 200,
+        copy_ns: 300,
+        audio_ns: 400,
+        work_ns: 500,
+        swap_ns: 600,
+        starved: 1000,
+        dropped: 2000,
+        late_available: true,
+    };
+    let after = Totals {
+        steps: 175,
+        fresh: 130,
+        swaps: 350,
+        missed: 14,
+        core_ns: 300_000_100,
+        rewind_ns: 150_000_200,
+        copy_ns: 37_500_300,
+        audio_ns: 93_750_400,
+        work_ns: 450_000_500,
+        swap_ns: 1_200_000_600,
+        starved: 2000,
+        dropped: 2250,
+        late_available: true,
+    };
+    assert_eq!(
+        lines(before, after, Duration::from_millis(2500)),
+        [
+            "Emu 30.0 fps | fresh 20.0 fps",
+            "Swaps 60.0 fps | late 2.0/s",
+            "Core 4.00 ms | rewind 2.00 ms/step",
+            "Copy 0.50 ms | audio 1.25 ms/step",
+            "Work 3.00 ms | swap 8.00 ms/swap",
+            "Audio gaps 400 | drop 100 samples/s",
+        ]
+    );
+    let host = Totals {
+        late_available: false,
+        ..after
+    };
+    assert!(lines(before, host, Duration::from_secs(1))[1].ends_with("late n/a"));
+}
+
+#[test]
 fn the_worker_runs_until_it_is_paused_and_resumes_where_it_stopped() {
     let emu = spawn();
     let early = frame_count(&emu);

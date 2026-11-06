@@ -26,6 +26,9 @@ fn root_for(platform: Platform) -> TempDir {
             std::fs::write(dir.join("Game.gba"), rom).unwrap();
             d
         }
+        Platform::Ps | Platform::Pico8 => {
+            panic!("native platforms do not use Game Boy scale settings")
+        }
     }
 }
 

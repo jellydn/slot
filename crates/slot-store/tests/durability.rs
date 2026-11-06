@@ -142,6 +142,42 @@ fn a_first_boot_is_neither_dark_nor_silent() {
 }
 
 #[test]
+fn ps1_rewind_defaults_off_and_preserves_legacy_explicit_choices() {
+    let d = tmp_root();
+    let fresh = read_slot_state(d.path());
+    assert!(fresh.rewind);
+    assert!(!fresh.rewind_ps);
+    write_slot_state(d.path(), &fresh).unwrap();
+    let path = d.path().join("Config/slot.state");
+    let baseline = std::fs::read_to_string(&path).unwrap();
+    for (keys, global, ps) in [
+        ("", true, false),
+        ("rewind=1\n", true, true),
+        ("rewind=0\n", false, false),
+        ("rewind=1\nrewind_ps=0\n", true, false),
+        ("rewind=0\nrewind_ps=1\n", false, true),
+    ] {
+        let mut text = baseline
+            .lines()
+            .filter(|line| !line.starts_with("rewind=") && !line.starts_with("rewind_ps="))
+            .collect::<Vec<_>>()
+            .join("\n");
+        text.push('\n');
+        text.push_str(keys);
+        std::fs::write(&path, &text).unwrap();
+        let state = read_slot_state(d.path());
+        assert_eq!((state.rewind, state.rewind_ps), (global, ps), "{keys:?}");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            text,
+            "read must not migrate files"
+        );
+        write_slot_state(d.path(), &state).unwrap();
+        assert_eq!(read_slot_state(d.path()), state);
+    }
+}
+
+#[test]
 fn slot_state_round_trips_a_zone_west_of_utc() {
     let d = tmp_root();
     let s = SlotState {
@@ -253,6 +289,7 @@ fn a_card_from_before_the_settings_keeps_all_its_values() {
             eject_save: true,
             turbo: true,
             rewind: true,
+            rewind_ps: false,
             gb_palettes: false,
             gb_palette: GbPalette::DEFAULT,
             appearance: Appearance::Dark,
@@ -261,12 +298,15 @@ fn a_card_from_before_the_settings_keeps_all_its_values() {
             show_recents: false,
             show_titles: false,
             left_stick_dpad: true,
+            ps_dualshock: false,
             lid_off_min: None,
             wifi_off: false,
             network_time: false,
             bezel_gba: BezelPick::Ags102,
             bezel_gb: BezelPick::Ags102,
             bezel_gbc: BezelPick::Ags102,
+            bezel_ps: BezelPick::Default,
+            bezel_pico8: BezelPick::Default,
             scale_gba: Scale::Fit,
             scale_gb: Scale::SpFrame,
             scale_gbc: Scale::SpFrame,
@@ -310,6 +350,8 @@ fn the_quick_menu_settings_round_trip_as_their_own_lines() {
         bezel_gba: BezelPick::None,
         bezel_gb: BezelPick::Default,
         bezel_gbc: BezelPick::File("Pocket.png".into()),
+        bezel_ps: BezelPick::File("Disc.png".into()),
+        bezel_pico8: BezelPick::None,
         blending_gba: Blending::Ghosting,
         blending_gb: Blending::Mix,
         shelf: Some("gba".into()),
@@ -341,6 +383,8 @@ fn the_quick_menu_settings_round_trip_as_their_own_lines() {
         "bezel_gba=none",
         "bezel_gb=default",
         "bezel_gbc=Pocket.png",
+        "bezel_ps=Disc.png",
+        "bezel_pico8=none",
         "colour_correction_gbc=1",
         "shader_gbc=shimmerless",
         "saturation=4",

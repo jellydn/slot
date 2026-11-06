@@ -113,32 +113,36 @@ fn the_pad_presses_the_console_buttons_bound_to_what_is_held() {
     use slot::input::Pad;
     use slot_input::Action;
     use slot_retro::ButtonMask;
-    use slot_store::{Binding, Controls, Device, GameButton, Modifier};
+    use slot_store::{Binding, Controls, Device, GameButton, Modifier, Platform};
     let mut c = Controls::default();
     c.set_game(GameButton::TurboA, None);
     c.set_game(GameButton::TurboB, None);
     let mut pad = Pad::default();
     pad.apply(Action::GbaDown(Btn::X));
     assert_eq!(
-        pad.mask(&c).0,
+        pad.mask(&c, Platform::Gba).0,
         0,
         "X reached the game with nothing bound to it"
     );
     c.set_game(GameButton::A, Binding::plain(Device::X));
-    assert_eq!(pad.mask(&c).0, ButtonMask::A);
+    assert_eq!(pad.mask(&c, Platform::Gba).0, ButtonMask::A);
     pad.apply(Action::GbaDown(Btn::A));
     assert_eq!(
-        pad.mask(&c).0,
+        pad.mask(&c, Platform::Gba).0,
         ButtonMask::A,
         "A still pressed A after A moved to X"
     );
     pad.apply(Action::GbaUp(Btn::X));
-    assert_eq!(pad.mask(&c).0, 0);
+    assert_eq!(pad.mask(&c, Platform::Gba).0, 0);
     c.set_game(GameButton::B, Binding::with(Modifier::Menu, Device::Y));
     pad.apply(Action::GbaDown(Btn::Y));
-    assert_eq!(pad.mask(&c).0, 0, "plain Y pressed a MENU+Y binding");
+    assert_eq!(
+        pad.mask(&c, Platform::Gba).0,
+        0,
+        "plain Y pressed a MENU+Y binding"
+    );
     pad.apply(Action::MenuChordDown(Btn::Y));
-    assert_eq!(pad.mask(&c).0, ButtonMask::B);
+    assert_eq!(pad.mask(&c, Platform::Gba).0, ButtonMask::B);
 }
 
 #[test]
@@ -146,20 +150,57 @@ fn turbo_a_and_b_fire_from_whatever_they_are_bound_to() {
     use slot::input::Pad;
     use slot_input::Action;
     use slot_retro::ButtonMask;
-    use slot_store::{Binding, Controls, Device, GameButton};
+    use slot_store::{Binding, Controls, Device, GameButton, Platform};
     let mut c = Controls::default();
     let mut pad = Pad::default();
     pad.apply(Action::GbaDown(Btn::X));
-    assert_eq!(pad.mask(&c).turbo(0).0, ButtonMask::A);
-    assert_eq!(pad.mask(&c).turbo(3).0, 0);
-    assert_eq!(pad.mask(&c).without_turbo().0, 0);
+    assert_eq!(pad.mask(&c, Platform::Gba).turbo(0).0, ButtonMask::A);
+    assert_eq!(pad.mask(&c, Platform::Gba).turbo(3).0, 0);
+    assert_eq!(pad.mask(&c, Platform::Gba).without_turbo().0, 0);
     pad.apply(Action::GbaUp(Btn::X));
     pad.apply(Action::GbaDown(Btn::Y));
-    assert_eq!(pad.mask(&c).turbo(0).0, ButtonMask::B);
+    assert_eq!(pad.mask(&c, Platform::Gba).turbo(0).0, ButtonMask::B);
     pad.apply(Action::GbaUp(Btn::Y));
     c.set_game(GameButton::TurboA, Binding::plain(Device::L2));
     pad.apply(Action::GbaDown(Btn::X));
-    assert_eq!(pad.mask(&c).turbo(0).0, 0, "X kept turbo A after it moved");
+    assert_eq!(
+        pad.mask(&c, Platform::Gba).turbo(0).0,
+        0,
+        "X kept turbo A after it moved"
+    );
     pad.apply(Action::GbaDown(Btn::L2));
-    assert_eq!(pad.mask(&c).turbo(0).0, ButtonMask::A);
+    assert_eq!(pad.mask(&c, Platform::Gba).turbo(0).0, ButtonMask::A);
+}
+
+#[test]
+fn ps1_buttons_use_the_mapper_without_turbo_or_invented_stick_clicks() {
+    use slot::input::Pad;
+    use slot_input::Action;
+    use slot_retro::ButtonMask;
+    use slot_store::{Binding, Controls, Device, GameButton, Platform};
+
+    let mut controls = Controls::default();
+    let mut pad = Pad::default();
+    for (button, bit) in [
+        (Btn::X, ButtonMask::X),
+        (Btn::Y, ButtonMask::Y),
+        (Btn::L2, ButtonMask::L2),
+        (Btn::R2, ButtonMask::R2),
+        (Btn::Select, ButtonMask::SELECT),
+        (Btn::Start, ButtonMask::START),
+    ] {
+        pad.apply(Action::GbaDown(button));
+        assert_eq!(pad.mask(&controls, Platform::Ps).0, bit);
+        pad.apply(Action::GbaUp(button));
+        assert_eq!(pad.mask(&controls, Platform::Ps).0, 0);
+    }
+    controls.set_game(GameButton::X, Binding::plain(Device::R2));
+    controls.set_game(GameButton::R2, Binding::plain(Device::X));
+    pad.apply(Action::GbaDown(Btn::R2));
+    assert_eq!(pad.mask(&controls, Platform::Ps).0, ButtonMask::X);
+    pad.apply(Action::GbaDown(Btn::X));
+    let mask = pad.mask(&controls, Platform::Ps).0;
+    assert_eq!(mask, ButtonMask::X | ButtonMask::R2);
+    assert_eq!(mask & (ButtonMask::L3 | ButtonMask::R3), 0);
+    assert_eq!(pad.mask(&controls, Platform::Pico8).0, 0);
 }

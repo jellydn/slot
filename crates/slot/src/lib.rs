@@ -48,6 +48,7 @@ pub mod loading_mark;
 pub mod network_faces;
 pub mod networks;
 pub mod panel_turn;
+pub mod performance;
 pub mod persist;
 pub mod prefetch;
 pub mod print_scene;
