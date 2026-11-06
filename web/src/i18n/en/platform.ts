@@ -27,6 +27,7 @@ export default {
   noGamesYet: 'No games yet.',
   noGamesMatch: 'No games match "{query}".',
   noBezelsYet: 'No bezels yet.',
+  nativeBezels: 'A neutral default bezel is built in. Upload a PNG here, then select it in the game menu under Settings → Screen → Bezel. Bezels fill the space behind the picture; they do not crop or stretch it.',
   loadFilesFailed: 'Failed to load files',
   uploadFailed: 'Upload failed',
   romUploadFailed: 'ROM upload failed',

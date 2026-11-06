@@ -1,15 +1,17 @@
 import type { LocationQueryRaw } from 'vue-router'
 
-export const PLATFORM_TAGS = ['GB', 'GBC', 'GBA', 'GBAV'] as const
+export const PLATFORM_TAGS = ['GB', 'GBC', 'GBA', 'GBAV', 'PS', 'PICO8'] as const
 
 export const PLATFORM_NAMES: Record<string, string> = {
   GBA: 'Game Boy Advance',
   GBAV: 'Game Boy Advance Video',
   GB: 'Game Boy',
   GBC: 'Game Boy Color',
+  PS: 'PlayStation',
+  PICO8: 'PICO-8',
 }
 
-export const HOME_TAGS = ['GB', 'GBC', 'GBA'] as const
+export const HOME_TAGS = ['GB', 'GBC', 'GBA', 'PS', 'PICO8'] as const
 
 export const VIDEO_TAG = 'GBAV'
 export const VIDEO_HOME = 'GBA'

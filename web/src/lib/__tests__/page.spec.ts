@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import * as client from '@/api/client'
-import { PLATFORM_TAGS, platformName } from '@/api/platforms'
+import { HOME_TAGS, PLATFORM_TAGS, platformName, platformRoute } from '@/api/platforms'
 import { pinFromSearch, normalizePin, pinComplete, PIN_LENGTH } from '@/lib/pin'
 import { saveWarning } from '@/lib/saveWarning'
 import { groupStates, stampLabel } from '@/lib/states'
@@ -11,8 +11,12 @@ const storage = { setItem: () => {}, removeItem: () => {}, getItem: () => null }
 const src = (...parts: string[]) => readFileSync(resolve(__dirname, '../..', ...parts), 'utf8')
 
 describe('platforms', () => {
-  it('lists GB GBC GBA GBAV', () => {
-    expect([...PLATFORM_TAGS]).toEqual(['GB', 'GBC', 'GBA', 'GBAV'])
+  it('lists existing and native platforms, with video under GBA', () => {
+    expect([...PLATFORM_TAGS]).toEqual(['GB', 'GBC', 'GBA', 'GBAV', 'PS', 'PICO8'])
+    expect([...HOME_TAGS]).toEqual(['GB', 'GBC', 'GBA', 'PS', 'PICO8'])
+    for (const tag of ['PS', 'PICO8']) {
+      expect(platformRoute(tag)).toEqual({ name: 'platform', params: { tag }, query: {} })
+    }
   })
 
   it('names each tag', () => {
@@ -20,6 +24,8 @@ describe('platforms', () => {
     expect(platformName('GBAV')).toBe('Game Boy Advance Video')
     expect(platformName('GB')).toBe('Game Boy')
     expect(platformName('GBC')).toBe('Game Boy Color')
+    expect(platformName('PS')).toBe('PlayStation')
+    expect(platformName('PICO8')).toBe('PICO-8')
   })
 })
 
