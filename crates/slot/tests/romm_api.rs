@@ -88,6 +88,195 @@ fn connection_failure_is_offline() {
 }
 
 #[test]
+fn streamed_downloads_report_real_bytes_and_total_through_errors_and_cancellation() {
+    use slot::romm::api::DownloadProgress;
+    use slot::romm::{Cancel, Protocol};
+    use std::io::{BufRead, Write};
+    use std::net::TcpListener;
+    use std::sync::mpsc::channel;
+    use std::time::{Duration, Instant};
+
+    for mode in ["known", "unknown", "truncated", "cancel"] {
+        let size = 3 * 1024 * 1024;
+        let first = 64 * 1024;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (release, wait) = channel();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut reader = std::io::BufReader::new(&mut socket);
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            let length = if mode == "unknown" {
+                String::new()
+            } else {
+                format!("Content-Length: {size}\r\n")
+            };
+            write!(
+                socket,
+                "HTTP/1.1 200 OK\r\n{length}Connection: close\r\n\r\n"
+            )
+            .unwrap();
+            socket.write_all(&vec![0x59; first]).unwrap();
+            wait.recv_timeout(Duration::from_secs(10)).unwrap();
+            if mode != "truncated" {
+                let _ = socket.write_all(&vec![0x59; size - first]);
+            }
+        });
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("download.part");
+        let to = path.clone();
+        let cancel = Cancel::default();
+        let transfer = cancel.clone();
+        let worker = std::thread::spawn(move || {
+            http_api(&RommConf {
+                protocol: Protocol::Http,
+                server: "127.0.0.1".into(),
+                port: Some(port),
+                ..RommConf::default()
+            })
+            .download(42, "Large.chd", &[], &to, &transfer)
+        });
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if matches!(cancel.progress(), Some(DownloadProgress::Downloading { bytes, .. }) if bytes == first as u64)
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline, "{mode}: no live progress");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(
+            cancel.progress(),
+            Some(DownloadProgress::Downloading {
+                bytes: first as u64,
+                total: (mode != "unknown").then_some(size as u64),
+            })
+        );
+        if mode == "cancel" {
+            cancel.set();
+        }
+        release.send(()).unwrap();
+        let result = worker.join().unwrap();
+        server.join().unwrap();
+        match mode {
+            "truncated" => assert_eq!(result, Err(ApiError::Truncated)),
+            "cancel" => assert_eq!(result, Err(ApiError::Cancelled)),
+            _ => {
+                assert_eq!(result, Ok(()));
+                assert_eq!(std::fs::read(path).unwrap(), vec![0x59; size]);
+                assert_eq!(
+                    cancel.progress(),
+                    Some(DownloadProgress::Downloading {
+                        bytes: size as u64,
+                        total: (mode != "unknown").then_some(size as u64),
+                    })
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn new_core_libraries_download_exact_bytes_over_http_using_server_platform_ids() {
+    use slot::romm::{Cancel, Protocol};
+    use std::io::{BufRead, Write};
+    use std::net::TcpListener;
+    for (wanted, server_slug, name, bytes, folder) in [
+        (
+            "psx",
+            "ps",
+            "Disc.chd",
+            b"MComprHDauthored".as_slice(),
+            "PS",
+        ),
+        (
+            "pico",
+            "pico8",
+            "Cart.p8",
+            include_bytes!("../../slot-retro/tests/fixtures/persistence.p8").as_slice(),
+            "PICO8",
+        ),
+    ] {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            for _ in 0..4 {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                    .unwrap();
+                let mut reader = std::io::BufReader::new(&mut socket);
+                let mut request = String::new();
+                reader.read_line(&mut request).unwrap();
+                let path = request.split_whitespace().nth(1).unwrap();
+                let mut authorized = false;
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" {
+                        break;
+                    }
+                    authorized |= line
+                        .to_ascii_lowercase()
+                        .starts_with("authorization: bearer test-token");
+                }
+                assert!(authorized);
+                let rom = serde_json::json!({"id":42,"name":"Authored fixture","platform_slug":server_slug,"fs_name":"Folder","files":[{"id":91,"file_name":name}]});
+                let body = match path {
+                    "/api/platforms" => serde_json::json!([{"id":99,"slug":"sega-pico"},{"id":73,"slug":server_slug}]).to_string().into_bytes(),
+                    "/api/roms?platform_ids=73&limit=20&offset=0&order_by=name&order_dir=asc&with_files=true" => serde_json::json!({"items":[rom],"total":1}).to_string().into_bytes(),
+                    "/api/roms/42" => rom.to_string().into_bytes(),
+                    path => {
+                        assert_eq!(path, format!("/api/roms/42/content/{name}?file_ids=91"));
+                        bytes.to_vec()
+                    }
+                };
+                write!(
+                    socket,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                )
+                .unwrap();
+                socket.write_all(&body).unwrap();
+            }
+        });
+        let conf = RommConf {
+            protocol: Protocol::Http,
+            server: "127.0.0.1".into(),
+            port: Some(port),
+            token: Some("test-token".into()),
+            ..RommConf::default()
+        };
+        let api = http_api(&conf);
+        let page = api.library(wanted, 0).unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert!(page.items[0].supported());
+        let d = tempfile::tempdir().unwrap();
+        slot::root::ensure(d.path());
+        let done = slot::romm::install::install(
+            d.path(),
+            api.as_ref(),
+            &page.items[0].install(),
+            &Cancel::default(),
+            |_| u64::MAX,
+        )
+        .unwrap();
+        assert_eq!(done.outcome, Outcome::Done);
+        assert_eq!(
+            std::fs::read(d.path().join("Games").join(folder).join(name)).unwrap(),
+            bytes
+        );
+        server.join().unwrap();
+    }
+}
+
+#[test]
 fn parses_the_response_fixtures() {
     assert_eq!(
         parse_version(r#"{"SYSTEM":{"VERSION":"5.4.0"}}"#),

@@ -14,6 +14,7 @@ struct Fake {
     slug: &'static str,
     name: String,
     bytes: Vec<u8>,
+    size: Option<u64>,
     fail: Option<ApiError>,
 }
 
@@ -25,6 +26,7 @@ impl Fake {
             asked: std::sync::Mutex::default(),
             name: name.to_string(),
             bytes,
+            size: None,
             fail: None,
         }
     }
@@ -66,6 +68,14 @@ impl Api for Fake {
     ) -> Result<(), ApiError> {
         self.asked.lock().unwrap().push(name.to_string());
         std::fs::write(to, &self.bytes).unwrap();
+        if let Some(size) = self.size {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(to)
+                .unwrap()
+                .set_len(size)
+                .unwrap();
+        }
         if let Some(e) = &self.fail {
             if *e == ApiError::Cancelled {
                 cancel.set();
@@ -128,12 +138,198 @@ fn temps_empty(root: &Path) -> bool {
 }
 
 #[test]
-fn target_dir_maps_the_three_slugs() {
-    assert_eq!(target_dir("gb"), Some(Platform::Gb));
-    assert_eq!(target_dir("gbc"), Some(Platform::Gbc));
-    assert_eq!(target_dir("GBA"), Some(Platform::Gba));
+fn target_dir_maps_downloads_to_their_playable_shelves() {
+    assert_eq!(target_dir("gb").unwrap().platform(), Some(Platform::Gb));
+    assert_eq!(target_dir("gbc").unwrap().platform(), Some(Platform::Gbc));
+    assert_eq!(target_dir("GBA").unwrap().platform(), Some(Platform::Gba));
+    for (slug, folder, platform) in [
+        ("psx", "PS", Platform::Ps),
+        ("ps", "PS", Platform::Ps),
+        ("pico", "PICO8", Platform::Pico8),
+        ("pico8", "PICO8", Platform::Pico8),
+        ("PICO-8", "PICO8", Platform::Pico8),
+    ] {
+        let target = target_dir(slug).unwrap();
+        assert_eq!(target.dir_name(), folder);
+        assert_eq!(target.platform(), Some(platform));
+    }
     assert_eq!(target_dir("gbav"), None);
     assert_eq!(target_dir("snes"), None);
+    assert_eq!(target_dir("sega-pico"), None);
+}
+
+#[test]
+fn new_core_downloads_preserve_single_file_content_and_existing_games() {
+    let cart = include_bytes!("../../slot-retro/tests/fixtures/persistence.p8");
+    for (slug, folder, name, bytes) in [
+        (
+            "psx",
+            "PS",
+            "Disc.CHD",
+            b"MComprHDauthored header fixture".as_slice(),
+        ),
+        (
+            "ps",
+            "PS",
+            "Disc.PBP",
+            b"\0PBPauthored header fixture".as_slice(),
+        ),
+        ("pico", "PICO8", "Cart.p8", cart.as_slice()),
+    ] {
+        let d = tempdir().unwrap();
+        let api = Fake::new(slug, name, bytes.to_vec());
+        let done = run(d.path(), &api).unwrap();
+        assert_eq!(done.outcome, Outcome::Done, "{name}");
+        let platform = target_dir(slug).unwrap().platform().unwrap();
+        assert_eq!(done.platform, Some(platform));
+        assert_eq!(done.stem.as_deref(), Some(name));
+        let carts = slot_store::scan_platform(d.path(), platform).unwrap();
+        assert_eq!(carts.len(), 1);
+        assert_eq!(carts[0].stem, done.stem.unwrap());
+        let target = d.path().join("Games").join(folder).join(name);
+        assert_eq!(std::fs::read(&target).unwrap(), bytes);
+        let other = Fake::new(slug, name, b"replacement".to_vec());
+        assert_eq!(
+            run(d.path(), &other).unwrap().outcome,
+            Outcome::AlreadyInstalled
+        );
+        assert_eq!(std::fs::read(&target).unwrap(), bytes);
+        assert!(other.asked.lock().unwrap().is_empty());
+        assert!(temps_empty(d.path()));
+    }
+}
+
+#[test]
+fn new_core_zips_extract_one_supported_file_and_clean_up_invalid_payloads() {
+    for (slug, name, bytes, folder) in [
+        ("psx", "Disc.chd", b"MComprHDauthored".as_slice(), "PS"),
+        (
+            "pico8",
+            "Cart.p8",
+            include_bytes!("../../slot-retro/tests/fixtures/persistence.p8").as_slice(),
+            "PICO8",
+        ),
+    ] {
+        let d = tempdir().unwrap();
+        let api = Fake::new(
+            slug,
+            "Pack.zip",
+            zip_of(&[(name, bytes), ("readme.txt", b"notes")]),
+        );
+        assert_eq!(run(d.path(), &api).unwrap().outcome, Outcome::Done);
+        assert_eq!(
+            std::fs::read(d.path().join("Games").join(folder).join(name)).unwrap(),
+            bytes
+        );
+        assert!(temps_empty(d.path()));
+    }
+    for (slug, name) in [
+        ("psx", "Error.chd"),
+        ("ps", "Error.pbp"),
+        ("pico", "Error.p8"),
+        ("pico8", "Error.p8.png"),
+    ] {
+        let d = tempdir().unwrap();
+        let api = Fake::new(
+            slug,
+            "Bad.zip",
+            zip_of(&[(name, b"<html>not a game</html>")]),
+        );
+        assert_eq!(failed_with(run(d.path(), &api)), "Invalid game file");
+        assert!(temps_empty(d.path()));
+    }
+}
+
+#[test]
+fn pico8_png_cart_requires_a_complete_cart_sized_png_and_cart_filename() {
+    fn image(w: u32, h: u32) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let mut encoder = png::Encoder::new(&mut bytes, w, h);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder
+            .write_header()
+            .unwrap()
+            .write_image_data(&vec![0; (w * h * 4) as usize])
+            .unwrap();
+        bytes
+    }
+    let d = tempdir().unwrap();
+    let bytes = image(160, 205);
+    assert_eq!(
+        run(d.path(), &Fake::new("pico", "Cart.p8.png", bytes.clone()))
+            .unwrap()
+            .outcome,
+        Outcome::Done
+    );
+    assert_eq!(
+        std::fs::read(d.path().join("Games/PICO8/Cart.p8.png")).unwrap(),
+        bytes
+    );
+    // RomM libraries can store PNG-encoded carts with a .p8 filename.
+    // fake-08 detects the actual format from the bytes, not the extension.
+    let d = tempdir().unwrap();
+    assert_eq!(
+        run(d.path(), &Fake::new("pico", "Cart.p8", bytes.clone()))
+            .unwrap()
+            .outcome,
+        Outcome::Done
+    );
+    assert_eq!(
+        std::fs::read(d.path().join("Games/PICO8/Cart.p8")).unwrap(),
+        bytes
+    );
+    let d = tempdir().unwrap();
+    assert_eq!(
+        failed_with(run(
+            d.path(),
+            &Fake::new("pico", "Broken.p8", bytes[..bytes.len() / 2].to_vec())
+        )),
+        "Invalid game file"
+    );
+    assert_eq!(
+        failed_with(run(d.path(), &Fake::new("pico", "Art.png", bytes))),
+        "Unsupported file type"
+    );
+    for name in ["Wrong.p8", "Wrong.p8.png"] {
+        assert_eq!(
+            failed_with(run(d.path(), &Fake::new("pico", name, image(128, 128)))),
+            "Invalid game file"
+        );
+    }
+    assert!(temps_empty(d.path()));
+}
+
+#[test]
+fn ps1_descriptors_and_tracks_are_not_downloaded_in_isolation() {
+    for name in ["Disc.cue", "Track.bin", "Game.m3u"] {
+        let d = tempdir().unwrap();
+        let api = Fake::new("psx", name, b"authored".to_vec());
+        assert_eq!(failed_with(run(d.path(), &api)), "Unsupported file type");
+        assert!(api.asked.lock().unwrap().is_empty());
+    }
+}
+
+#[test]
+fn ps1_downloads_enforce_the_fat32_file_size_boundary_without_reading_the_image() {
+    for (size, accepted) in [(u32::MAX as u64, true), (u32::MAX as u64 + 1, false)] {
+        let d = tempdir().unwrap();
+        let mut api = Fake::new("psx", "Large.chd", b"MComprHD".to_vec());
+        api.size = Some(size);
+        let out = run(d.path(), &api).unwrap();
+        let target = d.path().join("Games/PS/Large.chd");
+        if accepted {
+            assert_eq!(out.outcome, Outcome::Done);
+            assert_eq!(std::fs::metadata(target).unwrap().len(), size);
+        } else {
+            assert_eq!(
+                out.outcome,
+                Outcome::Failed("File exceeds the FAT32 size limit".into())
+            );
+            assert!(!target.exists());
+        }
+        assert!(temps_empty(d.path()));
+    }
 }
 
 #[test]
@@ -196,7 +392,7 @@ fn other_platform_fails_with_reason() {
         d.path(),
         &Fake::new("snes", "Mario.sfc", b"x".to_vec()),
     ));
-    assert_eq!(reason, "slot only plays GB, GBC and GBA");
+    assert_eq!(reason, "Unsupported RomM platform");
 }
 
 #[test]
@@ -327,6 +523,12 @@ fn a_folder_rom_with_one_file_installs_under_that_file_name() {
     assert_eq!(out.outcome, Outcome::Done);
     assert!(d.path().join("Games/GBA/Game.gba").exists());
     assert_eq!(*api.asked.lock().unwrap(), ["Game.gba"]);
+    api.asked.lock().unwrap().clear();
+    let mut selected = req();
+    selected.file_ids = vec![99];
+    let out = install(d.path(), &api, &selected, &Cancel::default(), roomy);
+    assert_eq!(failed_with(out), "Selected file is no longer available");
+    assert!(api.asked.lock().unwrap().is_empty());
 }
 
 #[test]

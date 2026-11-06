@@ -128,6 +128,10 @@ impl Api for Fake {
         cancel: &Cancel,
     ) -> Result<(), ApiError> {
         std::fs::write(to, b"rom").unwrap();
+        cancel.set_progress(slot::romm::api::DownloadProgress::Downloading {
+            bytes: 3,
+            total: Some(30),
+        });
         let hold = {
             let mut s = self.0.lock().unwrap();
             s.fetched.push(rom);
@@ -556,6 +560,18 @@ fn library_download_cancels_without_a_remote_install_report() {
     });
     until("library download never began", || {
         api.0.lock().unwrap().held
+    });
+    until("library progress never arrived", || {
+        matches!(
+            jobs.take(),
+            Some(RommEvent::Progress {
+                request: 17,
+                progress: slot::romm::api::DownloadProgress::Downloading {
+                    bytes: 3,
+                    total: Some(30)
+                },
+            })
+        )
     });
     jobs.ask(RommJob::Stop);
     until("library cancellation never completed", || {

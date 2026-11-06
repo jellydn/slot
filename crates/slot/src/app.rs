@@ -673,6 +673,7 @@ pub struct App {
     library_request: u64,
     library_busy: bool,
     library_status: String,
+    library_progress: Option<crate::romm::api::DownloadProgress>,
     fetch_art: Option<FetchArt>,
     wifi_held: bool,
     wifi_boot_blocked: bool,
@@ -863,6 +864,7 @@ impl App {
             library_request: 0,
             library_busy: false,
             library_status: String::new(),
+            library_progress: None,
             pair_screen: PairScreen::Starting,
             pair_faces: None,
             fetch_art: None,
@@ -9163,11 +9165,14 @@ impl App {
         self.library_request += 1;
         self.library = crate::romm::api::Library::default();
         self.library_busy = true;
+        self.library_progress = None;
         self.library_status = "Loading".into();
         self.phase = Phase::RommLibrary { row: 0 };
         self.romm_jobs.ask(RommJob::Library {
             conf: self.romm.clone(),
-            slug: ["gb", "gbc", "gba"][self.library_platform].into(),
+            slug: crate::romm::install::TARGETS[self.library_platform]
+                .slug
+                .into(),
             offset: self.library_offset,
             request: self.library_request,
         });
@@ -9176,6 +9181,7 @@ impl App {
     fn leave_library(&mut self) {
         self.library_request += 1;
         self.library_busy = false;
+        self.library_progress = None;
         self.romm_jobs.ask(RommJob::Stop);
         self.phase = Phase::QuickMenu {
             row: QuickRow::RommLibrary,
@@ -9197,12 +9203,13 @@ impl App {
         let rows = 1 + n + usize::from(self.library_offset > 0) + usize::from(self.library.more);
         match action {
             Action::GbaDown(Btn::Left | Btn::Right) => {
+                let count = crate::romm::install::TARGETS.len();
                 let step = if action == Action::GbaDown(Btn::Left) {
-                    2
+                    count - 1
                 } else {
                     1
                 };
-                self.library_platform = (self.library_platform + step) % 3;
+                self.library_platform = (self.library_platform + step) % count;
                 self.library_offset = 0;
                 self.load_library();
             }
@@ -9228,6 +9235,10 @@ impl App {
                 self.library_request += 1;
                 self.library_busy = true;
                 self.library_status = "Downloading; B: cancel".into();
+                self.library_progress = Some(crate::romm::api::DownloadProgress::Downloading {
+                    bytes: 0,
+                    total: None,
+                });
                 self.romm_jobs.ask(RommJob::Download {
                     conf: self.romm.clone(),
                     install: rom.install(),
@@ -9491,21 +9502,44 @@ impl App {
                         Err(_) => self.library_status = "Could not load; A: retry".into(),
                     }
                 }
+                RommEvent::Progress { request, progress }
+                    if request == self.library_request
+                        && self.library_busy
+                        && matches!(self.phase, Phase::RommLibrary { .. }) =>
+                {
+                    self.library_status = match progress {
+                        crate::romm::api::DownloadProgress::Downloading { .. } => {
+                            "Downloading; B: cancel"
+                        }
+                        crate::romm::api::DownloadProgress::Installing => "Installing; B: cancel",
+                    }
+                    .into();
+                    self.library_progress = Some(progress);
+                }
                 RommEvent::Download { request, result }
                     if request == self.library_request
                         && matches!(self.phase, Phase::RommLibrary { .. }) =>
                 {
                     self.library_busy = false;
+                    self.library_progress = None;
                     self.library_status = match result {
                         Ok(done) => match done.outcome {
+                            crate::romm::Outcome::Done if done.platform.is_none() => {
+                                "Downloaded; core support pending".into()
+                            }
                             crate::romm::Outcome::Done => "Installed".into(),
                             crate::romm::Outcome::AlreadyInstalled => "Already installed".into(),
-                            crate::romm::Outcome::Failed(reason) => reason,
+                            crate::romm::Outcome::Failed(reason) => format!("Error: {reason}"),
                         },
-                        Err(_) => "Download stopped; A: retry".into(),
+                        Err(crate::romm::install::Stopped::Cancelled) => {
+                            "Cancelled; A: retry".into()
+                        }
+                        Err(_) => "Download failed; A: retry".into(),
                     };
                 }
-                RommEvent::Library { .. } | RommEvent::Download { .. } => {}
+                RommEvent::Library { .. }
+                | RommEvent::Download { .. }
+                | RommEvent::Progress { .. } => {}
                 RommEvent::Paired { token, device_id } => {
                     self.romm.token = Some(token);
                     self.romm.device_id = Some(device_id);
@@ -9804,7 +9838,7 @@ impl App {
                 let mut lines = vec![line(
                     format!(
                         "{} Library (Left/Right)",
-                        ["GB", "GBC", "GBA"][self.library_platform]
+                        crate::romm::install::TARGETS[self.library_platform].label
                     ),
                     None,
                 )];
@@ -9822,6 +9856,26 @@ impl App {
                 }
                 if self.library_status != "A: download" {
                     lines.insert(row + 1, line(self.library_status.clone(), None));
+                }
+                if let Some(crate::romm::api::DownloadProgress::Downloading { bytes, total }) =
+                    self.library_progress
+                {
+                    let size = |n: u64| {
+                        if n >= 1024 * 1024 {
+                            format!("{:.1} MiB", n as f64 / (1024.0 * 1024.0))
+                        } else {
+                            format!("{n} B")
+                        }
+                    };
+                    let detail = match total.filter(|&n| n > 0) {
+                        Some(total) => {
+                            let percent = u128::from(bytes) * 100 / u128::from(total);
+                            lines[row + 1].value = Some(format!("{percent}%"));
+                            format!("{} / {}", size(bytes), size(total))
+                        }
+                        None => format!("{} received; total unknown", size(bytes)),
+                    };
+                    lines.insert(row + 2, line(detail, None));
                 }
                 Some(NetScreen {
                     lines,

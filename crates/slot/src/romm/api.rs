@@ -1,7 +1,7 @@
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::conf::RommConf;
@@ -104,6 +104,13 @@ pub struct Library {
 pub struct Cancel {
     own: Arc<AtomicBool>,
     halt: Arc<AtomicBool>,
+    progress: Arc<Mutex<Option<DownloadProgress>>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DownloadProgress {
+    Downloading { bytes: u64, total: Option<u64> },
+    Installing,
 }
 
 impl Cancel {
@@ -111,6 +118,7 @@ impl Cancel {
         Cancel {
             own: Arc::default(),
             halt,
+            progress: Arc::default(),
         }
     }
 
@@ -120,6 +128,14 @@ impl Cancel {
 
     pub fn is_set(&self) -> bool {
         self.own.load(Ordering::SeqCst) || self.halt.load(Ordering::SeqCst)
+    }
+
+    pub fn set_progress(&self, progress: DownloadProgress) {
+        *self.progress.lock().unwrap() = Some(progress);
+    }
+
+    pub fn progress(&self) -> Option<DownloadProgress> {
+        *self.progress.lock().unwrap()
     }
 }
 
@@ -469,14 +485,20 @@ impl Api for HttpApi {
     }
 
     fn library(&self, slug: &str, offset: u64) -> Result<Library, ApiError> {
-        if super::install::target_dir(slug).is_none() {
-            return Err(ApiError::Client(400));
-        }
+        let target = super::install::target_dir(slug).ok_or(ApiError::Client(400))?;
         let platforms: serde_json::Value =
             serde_json::from_str(&text(ok(self.get("/api/platforms")?)?)?)
                 .map_err(|_| ApiError::Server(200))?;
         let platforms = platforms.as_array().ok_or(ApiError::Server(200))?;
-        let Some(platform) = platforms.iter().find(|p| p["slug"].as_str() == Some(slug)) else {
+        let Some(platform) = platforms
+            .iter()
+            .find(|p| p["slug"].as_str() == Some(slug))
+            .or_else(|| {
+                platforms.iter().find(|p| {
+                    p["slug"].as_str().and_then(super::install::target_dir) == Some(target)
+                })
+            })
+        else {
             return Ok(Library::default());
         };
         let id = platform["id"].as_u64().ok_or(ApiError::Server(200))?;
@@ -557,6 +579,10 @@ impl Api for HttpApi {
             .get("content-length")
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse::<u64>().ok());
+        cancel.set_progress(DownloadProgress::Downloading {
+            bytes: 0,
+            total: expected,
+        });
         let mut reader = reply.into_body().into_reader();
         let mut file =
             slot_store::fs::create_file(to).map_err(|e| ApiError::Write(e.to_string()))?;
@@ -579,6 +605,10 @@ impl Api for HttpApi {
             file.write_all(&buf[..n])
                 .map_err(|e| ApiError::Write(e.to_string()))?;
             total += n as u64;
+            cancel.set_progress(DownloadProgress::Downloading {
+                bytes: total,
+                total: expected,
+            });
         }
         file.flush().map_err(|e| ApiError::Write(e.to_string()))?;
         match expected {

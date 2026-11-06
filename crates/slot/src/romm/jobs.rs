@@ -7,7 +7,9 @@ use std::time::{Duration, Instant};
 
 use slot_store::{scan, Cart, Platform};
 
-use super::api::{version_ok, Api, ApiError, Cancel, Install, Library, Outcome, Pending, Poll};
+use super::api::{
+    version_ok, Api, ApiError, Cancel, DownloadProgress, Install, Library, Outcome, Pending, Poll,
+};
 use super::conf::RommConf;
 use super::install::{free_space, install, Finished, Stopped};
 use super::socket::{dial, Push, Source};
@@ -79,6 +81,10 @@ pub enum RommEvent {
     Download {
         request: u64,
         result: Result<Finished, Stopped>,
+    },
+    Progress {
+        request: u64,
+        progress: DownloadProgress,
     },
 }
 
@@ -559,12 +565,15 @@ struct Queue {
     events: Receiver<RommEvent>,
     halt: Arc<AtomicBool>,
     download: Cancel,
+    download_request: Option<u64>,
+    last_progress: Option<(Instant, DownloadProgress)>,
 }
 
 impl RommJobs for Queue {
     fn ask(&mut self, job: RommJob) {
         if matches!(job, RommJob::Stop | RommJob::Disconnect(_)) {
             self.download.set();
+            self.download_request = None;
             self.halt.store(true, Ordering::SeqCst);
         }
         if let RommJob::Download {
@@ -575,6 +584,8 @@ impl RommJobs for Queue {
         {
             self.download.set();
             self.download = Cancel::default();
+            self.download_request = Some(request);
+            self.last_progress = None;
             let _ = self.jobs.send(Work::Download(
                 conf,
                 install,
@@ -587,11 +598,31 @@ impl RommJobs for Queue {
     }
 
     fn take(&mut self) -> Option<RommEvent> {
-        self.events.try_recv().ok()
+        if let Ok(event) = self.events.try_recv() {
+            if matches!(&event, RommEvent::Download { request, .. } if Some(*request) == self.download_request)
+            {
+                self.download_request = None;
+            }
+            return Some(event);
+        }
+        let request = self.download_request?;
+        let progress = self.download.progress()?;
+        // One latest snapshot, at most ten times a second: never queue every chunk.
+        if self
+            .last_progress
+            .is_some_and(|(at, last)| last == progress || at.elapsed() < Duration::from_millis(100))
+        {
+            return None;
+        }
+        self.last_progress = Some((Instant::now(), progress));
+        Some(RommEvent::Progress { request, progress })
     }
 }
 
 fn fetch_label(root: &Path, cart: &Cart) -> bool {
+    if cart.platform == Platform::Pico8 {
+        return crate::art::jobs::fetch_label(root, cart).unwrap_or(false);
+    }
     let Ok(index) = load_art_index(root) else {
         return false;
     };
@@ -615,6 +646,8 @@ pub fn spawn(mut runner: Runner) -> Box<dyn RommJobs> {
         events,
         halt,
         download: Cancel::default(),
+        download_request: None,
+        last_progress: None,
     })
 }
 

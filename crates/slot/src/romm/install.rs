@@ -1,11 +1,11 @@
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use slot_store::Platform;
 
-use super::api::{Api, ApiError, Cancel, Install, Outcome};
+use super::api::{Api, ApiError, Cancel, DownloadProgress, Install, Outcome};
 
 pub const TEMP_DIR: &str = "Cache/romm";
 
@@ -13,6 +13,75 @@ const CHUNK: usize = 64 * 1024;
 const CARD_FULL: &str = "Card is full";
 const SAVE_FAILED: &str = "Could not save the game";
 const UNSUPPORTED_FILE: &str = "Unsupported file type";
+
+/// Single-file downloads map to the same content identity used by the shelf.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Target {
+    pub slug: &'static str,
+    pub label: &'static str,
+    folder: &'static str,
+    extensions: &'static [&'static str],
+    platform: Option<Platform>,
+}
+
+pub const TARGETS: [Target; 5] = [
+    Target {
+        slug: "gb",
+        label: "GB",
+        folder: "GB",
+        extensions: &["gb", "gbc"],
+        platform: Some(Platform::Gb),
+    },
+    Target {
+        slug: "gbc",
+        label: "GBC",
+        folder: "GBC",
+        extensions: &["gb", "gbc"],
+        platform: Some(Platform::Gbc),
+    },
+    Target {
+        slug: "gba",
+        label: "GBA",
+        folder: "GBA",
+        extensions: &["gba"],
+        platform: Some(Platform::Gba),
+    },
+    Target {
+        slug: "psx",
+        label: "PS1",
+        folder: "PS",
+        extensions: &["chd", "pbp"],
+        platform: Some(Platform::Ps),
+    },
+    Target {
+        slug: "pico",
+        label: "PICO-8",
+        folder: "PICO8",
+        extensions: &["p8", "p8.png"],
+        platform: Some(Platform::Pico8),
+    },
+];
+
+impl Target {
+    pub fn dir_name(self) -> &'static str {
+        self.folder
+    }
+
+    pub fn platform(self) -> Option<Platform> {
+        self.platform
+    }
+
+    pub fn accepts(self, path: &Path) -> bool {
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            return false;
+        };
+        let name = name.to_ascii_lowercase();
+        self.extensions.iter().any(|ext| {
+            name.strip_suffix(ext)
+                .is_some_and(|prefix| prefix.ends_with('.'))
+        })
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Finished {
@@ -29,13 +98,14 @@ pub enum Stopped {
     Lost(ApiError),
 }
 
-pub fn target_dir(slug: &str) -> Option<Platform> {
-    match slug.to_ascii_lowercase().as_str() {
-        "gb" => Some(Platform::Gb),
-        "gbc" => Some(Platform::Gbc),
-        "gba" => Some(Platform::Gba),
-        _ => None,
-    }
+pub fn target_dir(slug: &str) -> Option<Target> {
+    let lower = slug.to_ascii_lowercase();
+    let slug = match lower.as_str() {
+        "ps" => "psx",
+        "pico8" | "pico-8" => "pico",
+        slug => slug,
+    };
+    TARGETS.iter().copied().find(|t| t.slug == slug)
 }
 
 pub fn free_space(path: &Path) -> u64 {
@@ -132,10 +202,15 @@ pub fn install(
         Err(e) => return stopped(e),
     };
     let Some(platform) = target_dir(&rom.platform_slug) else {
-        return failed("slot only plays GB, GBC and GBA");
+        return failed("Unsupported RomM platform");
     };
     if req.file_ids.len() > 1 {
         return failed("Multi-file ROMs are not supported");
+    }
+    if let [id] = req.file_ids.as_slice() {
+        if !rom.files.is_empty() && !rom.files.iter().any(|file| file.id == *id) {
+            return failed("Selected file is no longer available");
+        }
     }
     let fs_name = match req.file_ids.as_slice() {
         [id] => rom.files.iter().find(|file| file.id == *id),
@@ -176,6 +251,7 @@ pub fn install(
     if cancel.is_set() {
         return Err(Stopped::Cancelled);
     }
+    cancel.set_progress(DownloadProgress::Installing);
     let compressed = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
 
     let (source, final_name) = if is_zip {
@@ -199,6 +275,15 @@ pub fn install(
         return Err(Stopped::Cancelled);
     }
     let size = std::fs::metadata(&source).map(|m| m.len()).unwrap_or(0);
+    if size > u32::MAX as u64 {
+        return failed("File exceeds the FAT32 size limit");
+    }
+    if matches!(platform.slug, "psx" | "pico") && !valid_content(&source, &final_name, platform) {
+        return failed("Invalid game file");
+    }
+    if slot_store::fs::create_dir_all(&games).is_err() {
+        return failed(SAVE_FAILED);
+    }
     let same_device = match (std::fs::metadata(&source), std::fs::metadata(&games)) {
         (Ok(a), Ok(b)) => a.dev() == b.dev(),
         _ => true,
@@ -210,20 +295,65 @@ pub fn install(
     if slot_store::fs::rename(&source, &target).is_err() {
         return failed(SAVE_FAILED);
     }
-    let rom_stem = Path::new(&final_name)
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned());
+    let rom_stem = platform
+        .platform()
+        .and_then(|p| p.stem(Path::new(&final_name)))
+        .map(str::to_owned);
     Ok(Finished {
         outcome: Outcome::Done,
         stem: rom_stem,
-        platform: Some(platform),
+        platform: platform.platform(),
     })
+}
+
+fn valid_content(path: &Path, name: &str, target: Target) -> bool {
+    let Ok(mut file) = File::open(path) else {
+        return false;
+    };
+    if target.slug == "psx" {
+        let mut magic = [0; 8];
+        let n = file.read(&mut magic).unwrap_or(0);
+        return if name.to_ascii_lowercase().ends_with(".chd") {
+            n == 8 && &magic == b"MComprHD"
+        } else {
+            n >= 4 && &magic[..4] == b"\0PBP"
+        };
+    }
+    let mut header = [0; 128];
+    let n = file.read(&mut header).unwrap_or(0);
+    // Like fake-08, detect the cart format by its bytes. RomM may name PNG carts .p8.
+    if header[..n].starts_with(b"pico-8 cartridge //") {
+        let mut lines = header[..n].split(|b| *b == b'\n');
+        return lines
+            .next()
+            .is_some_and(|line| line.starts_with(b"pico-8 cartridge //"))
+            && lines
+                .next()
+                .and_then(|line| std::str::from_utf8(line).ok())
+                .and_then(|line| line.strip_prefix("version "))
+                .is_some_and(|version| version.trim().parse::<u32>().is_ok());
+    }
+    if file.rewind().is_err() {
+        return false;
+    }
+    let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
+    decoder.set_limits(png::Limits {
+        bytes: 160 * 205 * 8,
+    });
+    let Ok(mut reader) = decoder.read_info() else {
+        return false;
+    };
+    if (reader.info().width, reader.info().height) != (160, 205) {
+        return false;
+    }
+    let mut pixels = vec![0; reader.output_buffer_size()];
+    reader.next_frame(&mut pixels).is_ok()
 }
 
 fn unpack(
     part: &Path,
     unpacked: &Path,
-    platform: Platform,
+    platform: Target,
     compressed: u64,
     root: &Path,
     free: fn(&Path) -> u64,
