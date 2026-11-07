@@ -252,3 +252,205 @@ instrumentation is not a candidate runtime and is removed from the frontend.
    never present a fallback run as Swan evidence.
 6. Report results for that scene/device only. No general faster claim or
    release/default change follows from this experiment.
+
+## Opt-in host offscreen hardware prototype
+
+`crates/slot-gfx/examples/swan-hw-probe.rs` is an opt-in diagnostic behind
+`slot-gfx/host-hw-probe`: desktop GL on macOS, offscreen EGL/GLES on Linux.
+It is not linked into normal gameplay. The
+`slot-retro/host-probe` feature exposes the existing raw ABI to the diagnostic;
+it does not enable hardware rendering in `LibretroCore`. Production PCSX NEON,
+Swan software selection, per-core cards and disabled Swan states/resume remain
+unchanged. The example never invokes a state API or accepts a user save root.
+
+The Mac probe owns a CGL desktop OpenGL 4.1 context and RGBA8 FBO on one thread.
+It accepts only desktop core GL 3.2/3.3 requests without frontend depth/stencil,
+supplies proc/FBO callbacks, resets the core with that context current, and
+reads bounded native-resolution frames into top-left RGBA bytes. NULL means
+duplicate; the hardware sentinel is never dereferenced. Dimensions above
+1024×512 and readback failures are errors. Every fresh hardware-run frame must
+use the hardware callback; software fallback fails the run. RGB555 conversion
+differences of at most four channel values are allowed when comparing complete
+software/hardware images, not merely a screenshot centre pixel.
+
+The real-GL marker test checks asymmetric corners, both origin conventions,
+padded pixel-pack state, bounds and target sizes 7×5, 320×224, 320×448 and 3×9.
+The authored-disc CLI checks idle/red, RIGHT/green with game audio, release/red
+with silence, and CROSS-triggered yellow/blue/yellow disc reads. It closes and
+reopens software, OpenGL and OpenGL contexts. Its own new card is fsynced,
+reopened and byte-compared after each core closes; the game counter must be
+1, 2, 3. This is a disposable authored card, not user-card migration.
+
+One prototype lifecycle defect was reproduced and fixed: calling context
+destroy after `retro_unload_game` crashed in `System::RecreateGPU` because
+Swan's destroy callback switches to software through the still-live GPU.
+Destroy is now called while the game exists, then unload/deinit, then owned
+FBO/context/library destruction. Repeated complete core lifecycles pass.
+The first disc probe also sent Circle rather than CROSS; it failed red rather
+than yellow. The probe now uses the existing `ButtonMask::B` mapping, confirmed
+against pinned Swan source. Neither fix changes the upstream core.
+
+### Reproduce on a host, without SD/device access
+
+Use the pinned complete Swan source above. In a fresh export, the Mac build is:
+
+```sh
+make -f Makefile.libretro platform=osx arch=arm64 CPU_ARCH=aarch64 \
+  CC=clang CXX=clang++ GIT_VERSION=631f0fb \
+  GIT_HASH=631f0fb31b809e0f889d7c551fe695788e39c1d3 -j4
+```
+
+The reviewed local Mac build used Apple clang 21.0.0 on arm64 Darwin 27.2.0.
+Its SHA256 is
+`d036a49fa80836d9a8b65b02544c27c879deafa262cc1a8865f0fab5d1ae4d98`.
+This diagnostic runtime is not an approved distributable and does not replace
+the preserved Linux runtime. It retains upstream licensed MIT OpenBIOS.
+
+From the Slot root (choose new output directories; the commands refuse reuse):
+
+```sh
+python3 cores/ps1-pico8/build-acceptance.py /tmp/slot-authored-hw \
+  --llvm-bin /opt/homebrew/opt/llvm/bin
+cargo +1.96 test -p slot-gfx --no-default-features --features host-hw-probe \
+  --example swan-hw-probe --offline --locked
+cargo +1.96 run --release -p slot-gfx --no-default-features \
+  --features host-hw-probe --example swan-hw-probe --offline --locked -- \
+  /absolute/path/swanstation_libretro.dylib \
+  /tmp/slot-authored-hw/authored.m3u /tmp/slot-hw-results
+```
+
+The rebuilt fixture's `SHA256.json` exactly matched the retained acceptance
+fixture. Runs emit authored PNGs, three diagnostic cards and `report.json` with
+GL identity, frame counts, audio sample/energy counts and timed 180-frame
+windows. Readback time includes GPU synchronisation, allocation and CPU
+orientation/alpha normalisation. Core wall time also includes the software
+frame-copy path in software mode. PNG writes are outside timed windows.
+
+### Prepared Linux GLES gate — execution needs separate approval
+
+The same authored assertions now compile for AArch64 Linux. The example's
+private `egl.rs` loads installed EGL/GLES dynamically, requests ES3.2 and a
+64×64 RGBA8 pbuffer, owns the context/FBO on one thread, and refuses unsupported
+offscreen operation. It has no native-window creation or swap function and
+does not change `FbdevSurface`. A 300-second process alarm precedes driver/core
+loading. Normal teardown destroys core GL resources before unloading the game,
+then the owned FBO/context; failed EGL cleanup fails the diagnostic. Failed
+game loads do not call Swan's destroy callback on a nonexistent GPU.
+
+The output must be new. On Linux it also becomes `TMPDIR`, keeping temporary
+BIOS, shader-cache and save roots inside the diagnostic output. Only the
+authored test card is carried through the three independent lifecycles. No
+state API, user save directory or audio-device output is used. Linux reports
+compatibility/frame/audio counts, not the Mac's timing measurements. An alarm
+or crash does not run Rust destructors: the separately approved execution
+wrapper must still collect available host evidence and remove only its newly
+created temporary directory. Core-generated files remain within that root.
+
+Host cross-build uses Rust 1.96 and Zig 0.17.1. For example, set Cargo's
+`CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER` to an executable shell wrapper
+containing `exec zig cc -target aarch64-linux-gnu.2.29 "$@"`, then run:
+
+```sh
+cargo +1.96 build --release --offline --locked -p slot-gfx \
+  --no-default-features --features host-hw-probe --example swan-hw-probe \
+  --target aarch64-unknown-linux-gnu
+```
+
+The prepared executable is ELF64 AArch64 with maximum GLIBC symbol requirement
+2.28, linked to libc, libpthread and libdl (no bundled vendor graphics driver).
+Compilation is not stock shader/core acceptance. Do not run the command's
+output on a target without specific approval.
+
+Fresh publication checks passed: 170 gfx/retro tests (five external tests stay
+ignored), the real-GL marker test, strict Mac and AArch64 Linux diagnostic
+Clippy, formatting and Linux release cross-build. The full Mac authored run
+again passed card counters 1/2/3 and 2787 hardware callbacks for all 2787 fresh
+frames in each hardware lifecycle. A missing authored disc failed the card
+acceptance gate rather than being accepted for producing firmware frames.
+Receipts: `.amp/in/swan-hw-probe/pr5-{baseline,mac,clippy,linux-clippy,run}.log`,
+`linux-build.log`, `linux-elf.txt`. The fresh Mac report SHA256 is
+`591a1558060fe891dc995d62bb08ce815af1109826d76774a4f0a11dc153d3fd`.
+Prepared Linux executable SHA256 is
+`1a192596bffd2214f679eb14630057961bdc7b907684c384793d187866b72eb7`.
+No actual Linux driver/core run is implied by these host checks.
+
+Proposed next target scope: refuse an existing
+`/tmp/slot-swan-gles-20261107/`; copy only the reviewed executable, unchanged
+pinned Swan runtime and generated `authored.m3u`, `first.cue/.bin`,
+`second.cue/.bin` plus hash manifest. Run one diagnostic process from that root,
+with new output there, through Software → GLES → GLES. Check actual hardware
+callbacks, full captured image comparison, input-controlled sound samples and
+silence, real disc reads and card counters 1/2/3. Read back evidence to the host,
+then remove only the created root and independently verify absence. No user
+games/BIOS/cards, SD, settings/services, presentation, physical input, sound
+output, power changes or performance benchmark. Fresh unique stock identity
+and input hashes are required. The prior capability probe approval is consumed;
+**this new core execution is not yet approved or performed**.
+
+### Executed stock capability gate — not Swan core acceptance
+
+`egl-capability.c` preserves the exact original source of the separately
+approved one-process stock probe. Cross-build with
+`zig cc -target aarch64-linux-gnu.2.29 -O2 -std=c11 -Wall -Wextra -Werror egl-capability.c -ldl -o probe`.
+Its source SHA256 is
+`2c3c914c26cfde120fa29e11b34deac08de905f42c9e61ace029dc189dd85bd2`;
+reviewed executable SHA256 is
+`ad64f390001695400437030795b48095d1fe2c4398769f1642e4e5a208e33f18`.
+Fresh identity showed TinaLinux 4.9.191 #899, Neptune `5C1C9C53`,
+`a133-aw3/generic v1.0`, firmware version `1.1.1`. This is connected-userspace
+evidence, not independent authentication of an unmodified firmware image.
+
+The approved execution returned EGL 1.4 and **GLES 3.2 / GLSL 3.20**, GE8300,
+Imagination build `1.19@6345021`, using its own 64×64 pbuffer. The 4×4
+RGBA8/depth32F FBO was complete (`0x8cd5`), all 16 asymmetric RGBA pixels matched
+and all GL errors were zero. Normal resource/context/surface/EGL cleanup passed;
+process and ADB exits were zero. The ten-second alarm did not fire. The shell
+removed the created binary/directory, and a separate read-only query confirmed
+absence. No game/core or display window/swap ran; the SD was untouched.
+
+Maximum texture/renderbuffer size was 8192, colour attachments/draw buffers 8,
+samples 4. Runtime extension advertisements include EGL image/fence/wait and
+surfaceless support and GL float colour buffers/copy-image/buffer storage.
+They are not proof of working shared-context texture/fence transport. The
+readback checks colour, not arbitrary shader or depth-test correctness.
+The streamed runtime receipt SHA256 is
+`ba1e86e36838eac2959c263d696369bf522b148f79733c50359ab4f298981791`.
+Private receipts are `.amp/in/stock-gpu-capability-20261107/`; proprietary
+driver copies are never committed or packaged.
+
+### Cost and remaining gates
+
+The Apple M2 Pro/OpenGL 4.1 host passes the authored software/hardware checks.
+On this simple fill-scene fixture, hardware plus CPU readback is slower than
+software; this is not a demanding-game benchmark or target speed estimate.
+For idle/RIGHT/release, final run 7 measured 0.92–1.09 ms per software core step
+versus 1.40–1.48 ms for OpenGL plus readback. The readback/normalisation section
+alone took 0.68–0.73 ms per step. These are unpaced, release-build host windows
+of 180 calls each, not TSP frame times. All 2787 fresh frames in each hardware
+lifecycle used hardware transport; full captured images matched software
+within the stated quantisation tolerance. The authored card counters were
+1, 2, 3. The real-GL test, 170 baseline gfx/retro tests (five additional tests
+ignored), strict prototype Clippy and changed-file rustfmt passed. This is not
+an all-green workspace claim. No JS/TS source changed.
+
+Receipts are under `.amp/in/swan-hw-probe/`. Final `run-7/report.json` SHA256:
+`8225fea4286f5f89b25261cdf94d841fe25148dbcdbbdb3e2edcc8b5af7ccfbb`.
+No upload/compositor/presentation/audio-device cost is measured: this diagnostic
+does not run Slot's worker/menu path.
+
+The basic stock Tina GLES3/pbuffer/RGBA8/depth32F gate now passes. Swan's
+actual vendor shaders/core lifecycles, context loss, worker/compositor
+integration, sustained target timing and thermal behaviour remain unverified.
+The saved ES3.2 GE8300 report is from **KNULLI**, not stock Tina. Do not use it
+as stock acceptance. PCSX's separate GLES1 plugin still needs a distinct port;
+this Swan diagnostic does not make both cores hardware-capable. Shared-texture
+transport/fences or a production renderer require another architecture decision.
+Production feasibility: a worker-owned offscreen context and bounded CPU
+readback can retain the current frame contract, but does not establish a speed
+win. First validate the actual GLES core; then decide whether to integrate that
+opt-in readback path or approve a shared-texture/fence design. The latter needs
+new frame ownership, synchronisation, resize/context-loss and compositor
+compatibility contracts; do not implement it as an implicit option toggle.
+No new package, SD update or default-core change follows from this diagnostic.
+The owner authorises branch publication and a verified combined prerelease when
+ready; unfinished compatibility/integration work must remain explicit blockers.

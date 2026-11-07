@@ -1,8 +1,10 @@
-# PS1/PICO-8 draft status — 6 November 2026
+# PS1/PICO-8 draft status — 7 November 2026
 
 Test.9 is an owner-test milestone, **not hardware accepted or a stable release**.
-The draft records existing work; it does not authorise another SD/device write,
-live profiling, a release or a merge.
+The owner now authorises atomic branch pushes, updates to draft PR #5 and a
+verified prerelease when ready, not a merge or SD deployment. A separately
+approved stock capability probe has completed; its one execution permission
+does not authorise further device/core tests or performance profiling.
 
 ## Done and still limited
 
@@ -25,9 +27,11 @@ live profiling, a release or a merge.
 
 ## Owner feedback and next gates
 
-- **PICO:** “still not work.” The failing cart/format/action is unknown: label
-  fetch, launch, gameplay, exit, save or resume must be distinguished before
-  changing a path. The earlier positive test.4 report does not resolve this.
+- **PICO:** the owner clarified that Fetch Box Art should use the cart PNG.
+  All three carts in the existing host backup contain PNG bytes named `.p8`.
+  Read-only input copies reproduced `Malformed` before `9ddc830`, then passed
+  the corrected real fetch worker: three labels landed, zero missed, valid
+  128×128 output/cache files. The correction is not installed in test.9.
 - **Swan:** “a bit better,” reported 30–40 fps with choppy sound. This is a
   subjective improvement, not performance acceptance/full speed. The game,
   same-scene comparison and exact displayed metric are unconfirmed.
@@ -39,6 +43,37 @@ live profiling, a release or a merge.
 - Startup volume, decorative LEDs and full sleep/wake reliability remain
   unresolved. PS1 automatic artwork source/redistribution rights remain
   unresolved; manual PNG upload is retained. No accounts or mirror is added.
+
+## Hardware renderer gates
+
+- The opt-in Mac desktop-GL diagnostic passes software → hardware → hardware
+  authored input/video/audio/disc/card lifecycles, with hardware transport on
+  every fresh hardware frame. The simple fill scene was slower with GPU plus
+  CPU readback on M2 Pro. This is not a TSP speed prediction.
+- The owner-approved stock probe verified actual EGL 1.4, GLES 3.2 and GLSL
+  3.20 on GE8300, build `1.19@6345021`. Its own 64×64 pbuffer and 4×4
+  RGBA8/depth32F FBO passed all asymmetric readback pixels with no GL errors.
+  Normal EGL cleanup and independent temporary-directory removal checks passed.
+  This is stock Tina evidence, separate from earlier KNULLI evidence.
+- `swan-hw-probe` also prepares a Linux EGL/GLES compatibility path. It is
+  diagnostic-only, not production rendering. It has a 300-second alarm, no
+  window/swap API, private diagnostic cards/BIOS/cache roots and no Linux
+  timing benchmark. **No Swan core has been run on the stock GPU.**
+- Next live gate needs exact new approval: a fresh
+  `/tmp/slot-swan-gles-20261107/`, the reviewed diagnostic, pinned Swan runtime,
+  authored two-disc fixture, private output/cache/cards, one bounded process,
+  host evidence readback and cleanup. No user data, SD, audio-device output,
+  display takeover or service/settings changes.
+- Production still selects Swan Software. A worker-owned context/FBO with
+  bounded readback could preserve the CPU-frame transport, but needs actual
+  core/GLES correctness and Slot worker/menu/lifecycle acceptance first.
+  Shared-texture/fence transport is a larger design checkpoint, not approved
+  by stock extension strings. PCSX's legacy GLES1 plugin requires a separate
+  renderer port; keep the NEON software baseline/default unchanged.
+- Do not publish an incomplete hardware-rendering milestone as finished PS1
+  work. The combined prerelease remains gated on the remaining compatibility,
+  integration and package/source/licence/readback checks. Stable 0.2 assets,
+  frozen test snapshots and installed user data must stay unchanged.
 
 Owner-controlled A/B: use the same legal disc, region, scene, display/audio
 settings and controller mode; record the exact core and settings; compare
@@ -78,8 +113,9 @@ regression failed with `Encoded.P8: Malformed`, although the same PNG worked
 as `.p8.png`. Local labels now detect the PNG signature after the existing
 filename and size checks, then use the same bounded PNG decoder. The worker
 checks exact cropped pixels, full output naming and preserved custom labels.
-This change is not in test.9 and is not a diagnosis of the owner's unspecified
-PICO symptom. No new package or SD update was made.
+This change is not in test.9. The later exact backed-up-cart reproduction
+above confirms the clarified owner label failure; it does not establish
+launch/state compatibility for arbitrary carts. No new SD update was made.
 
 Swan revision `631f0fb31b809e0f889d7c551fe695788e39c1d3` retains GPL v3
 and separate dependency notices, including MIT PCSX-Redux OpenBIOS replacement
