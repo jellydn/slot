@@ -11,6 +11,10 @@ pub trait Snapshot {
 
     fn reset(&self) {}
 
+    fn supports_states(&self) -> bool {
+        true
+    }
+
     fn resume_trusted(&self) -> bool {
         true
     }
@@ -35,7 +39,7 @@ pub fn flush(
         }
     }
     if let Some(sav) = sav {
-        write_sav(root, platform, stem, sav)?;
+        write_sav_for(root, platform, core, stem, sav)?;
     }
     Ok(())
 }
@@ -57,8 +61,25 @@ pub fn eject(
 }
 
 pub fn write_sav(root: &Path, platform: Platform, stem: &str, sav: &[u8]) -> std::io::Result<bool> {
-    let path = sav_path(root, platform, stem);
-    if let Ok(Some(old)) = read_sav(root, platform, stem) {
+    write_sav_for(root, platform, default_core(platform), stem, sav)
+}
+
+pub fn write_sav_for(
+    root: &Path,
+    platform: Platform,
+    core: Core,
+    stem: &str,
+    sav: &[u8],
+) -> std::io::Result<bool> {
+    let path = sav_path_for(root, platform, core, stem);
+    if core == Core::SwanStation {
+        swan_card(sav)?;
+    }
+    let old = read_sav_for(root, platform, core, stem);
+    if core == Core::SwanStation && old.is_err() {
+        return old.map(|_| false);
+    }
+    if let Ok(Some(old)) = old {
         if old == sav {
             return Ok(false);
         }
@@ -71,10 +92,31 @@ pub fn write_sav(root: &Path, platform: Platform, stem: &str, sav: &[u8]) -> std
 }
 
 pub fn read_sav(root: &Path, platform: Platform, stem: &str) -> std::io::Result<Option<Vec<u8>>> {
+    read_sav_for(root, platform, default_core(platform), stem)
+}
+
+pub fn read_sav_for(
+    root: &Path,
+    platform: Platform,
+    core: Core,
+    stem: &str,
+) -> std::io::Result<Option<Vec<u8>>> {
+    if platform.native() {
+        return match std::fs::read(sav_path_for(root, platform, core, stem)) {
+            Ok(bytes) => {
+                if core == Core::SwanStation {
+                    swan_card(&bytes)?;
+                }
+                Ok(Some(bytes))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e),
+        };
+    }
     let srm = crate::root::saves_dir(root)
         .join(platform.dir_name())
         .join(format!("{stem}.srm"));
-    for path in [sav_path(root, platform, stem), srm] {
+    for path in [sav_path_for(root, platform, core, stem), srm] {
         match std::fs::read(&path) {
             Ok(bytes) if bytes.starts_with(RZIP_MAGIC) => return unrzip(&bytes).map(Some),
             Ok(bytes) => return Ok(Some(bytes)),
@@ -83,6 +125,16 @@ pub fn read_sav(root: &Path, platform: Platform, stem: &str) -> std::io::Result<
         }
     }
     Ok(None)
+}
+
+fn swan_card(bytes: &[u8]) -> std::io::Result<()> {
+    if bytes.len() != 128 * 1024 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "SwanStation card must be exactly 128 KiB; preserve the existing file",
+        ));
+    }
+    Ok(())
 }
 
 const RZIP_MAGIC: &[u8] = b"#RZIPv\x01#";
@@ -115,7 +167,35 @@ pub fn read_resume(
     StateRing::new(root, platform, core, stem).read_resume()
 }
 
-fn sav_path(root: &Path, platform: Platform, stem: &str) -> PathBuf {
+pub fn core_save_dir(root: &Path, platform: Platform, stem: &str) -> PathBuf {
+    core_save_dir_for(root, platform, default_core(platform), stem)
+}
+
+pub fn core_save_dir_for(root: &Path, platform: Platform, core: Core, stem: &str) -> PathBuf {
+    let saves = crate::root::saves_dir(root);
+    if !platform.native() {
+        return saves;
+    }
+    use sha2::{Digest, Sha256};
+    let identity = format!("{:x}", Sha256::digest(stem.as_bytes()));
+    saves
+        .join(platform.dir_name())
+        .join(core.as_str())
+        .join(identity)
+}
+
+fn default_core(platform: Platform) -> Core {
+    match platform {
+        Platform::Ps => Core::PcsxRearmed,
+        Platform::Pico8 => Core::Fake08,
+        _ => Core::Mgba,
+    }
+}
+
+fn sav_path_for(root: &Path, platform: Platform, core: Core, stem: &str) -> PathBuf {
+    if platform.native() {
+        return core_save_dir_for(root, platform, core, stem).join("memory.sav");
+    }
     crate::root::saves_dir(root)
         .join(platform.dir_name())
         .join(format!("{stem}.sav"))

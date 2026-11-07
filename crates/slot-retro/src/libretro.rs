@@ -7,7 +7,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use libloading::Library;
 
-use crate::core::{AvInfo, ButtonMask, CoreError, RetroCore, GBA_H, GBA_W};
+use crate::core::{
+    AvInfo, ButtonMask, Controller, CoreError, FrameGeometry, RetroCore, GBA_H, GBA_W,
+};
 use crate::ffi::*;
 use crate::link::Link;
 use crate::rumble::Rumble;
@@ -24,9 +26,16 @@ enum PixelFormat {
 
 struct Host {
     video: Vec<u8>,
+    native_video: bool,
+    geometry: FrameGeometry,
+    aspect: f32,
+    av: AvInfo,
     format: PixelFormat,
     audio: Vec<i16>,
     inputs: [u16; 2],
+    sticks: [[i16; 2]; 2],
+    dualshock_device: c_uint,
+    disk: Option<DiskControl>,
     system_dir: CString,
     save_dir: CString,
     rumble: Rumble,
@@ -38,6 +47,24 @@ struct Host {
     options: std::collections::HashMap<String, std::ffi::CString>,
     options_dirty: bool,
     declared: std::collections::HashMap<String, Vec<String>>,
+}
+
+fn valid_size(width: u32, height: u32) -> bool {
+    (1..=2048).contains(&width) && (1..=2048).contains(&height)
+}
+
+impl Host {
+    fn set_geometry(&mut self, g: &GameGeometry) -> bool {
+        if !valid_size(g.base_width, g.base_height) {
+            return false;
+        }
+        self.aspect = if g.aspect_ratio.is_finite() && g.aspect_ratio > 0.0 {
+            g.aspect_ratio
+        } else {
+            g.base_width as f32 / g.base_height as f32
+        };
+        true
+    }
 }
 
 thread_local! {
@@ -75,6 +102,66 @@ unsafe extern "C" fn set_rumble_state(port: c_uint, effect: c_uint, strength: u1
 
 unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
     match cmd {
+        GET_INPUT_BITMASKS => true,
+        SET_CONTROLLER_INFO => {
+            if data.is_null() {
+                return false;
+            }
+            // Controller subclass IDs belong to the core: PCSX uses 517 for
+            // DualShock, whereas Swan uses 261 (517 is its analog joystick).
+            let info = &*data.cast::<ControllerInfo>();
+            if info.types.is_null() {
+                return false;
+            }
+            let types = std::slice::from_raw_parts(info.types, info.num_types.min(64) as usize);
+            let device = types.iter().find_map(|ty| {
+                if ty.desc.is_null() {
+                    return None;
+                }
+                std::ffi::CStr::from_ptr(ty.desc)
+                    .to_string_lossy()
+                    .to_ascii_lowercase()
+                    .contains("dualshock")
+                    .then_some(ty.id)
+            });
+            with_host(|h| h.dualshock_device = device.unwrap_or(DEVICE_DUALSHOCK)).is_some()
+        }
+        SET_DISK_CONTROL_INTERFACE => {
+            if data.is_null() {
+                return with_host(|h| h.disk = None).is_some();
+            }
+            with_host(|h| h.disk = Some(ptr::read(data.cast::<DiskControl>()))).is_some()
+        }
+        SET_GEOMETRY => {
+            if data.is_null() {
+                return false;
+            }
+            with_host(|h| h.set_geometry(&*(data as *const GameGeometry))).unwrap_or(false)
+        }
+        SET_SYSTEM_AV_INFO => {
+            if data.is_null() {
+                return false;
+            }
+            let av = &*(data as *const SystemAvInfo);
+            if !av.timing.fps.is_finite()
+                || !(1.0..=1000.0).contains(&av.timing.fps)
+                || !av.timing.sample_rate.is_finite()
+                || !(1.0..=384_000.0).contains(&av.timing.sample_rate)
+            {
+                return false;
+            }
+            with_host(|h| {
+                if !h.set_geometry(&av.geometry) {
+                    return false;
+                }
+                h.av = AvInfo {
+                    fps: av.timing.fps,
+                    sample_rate: av.timing.sample_rate,
+                };
+                true
+            })
+            .unwrap_or(false)
+        }
         GET_CAN_DUPE => {
             if data.is_null() {
                 return false;
@@ -314,20 +401,46 @@ unsafe extern "C" fn video_refresh(
     height: c_uint,
     pitch: usize,
 ) {
-    if data.is_null() {
+    if data.is_null() || data as usize == usize::MAX || !valid_size(width, height) {
         return;
     }
     with_host(|h| {
-        let cols = width.min(GBA_W) as usize;
-        let rows = height.min(GBA_H) as usize;
-        let ox = (GBA_W as usize - cols) / 2;
-        let oy = (GBA_H as usize - rows) / 2;
-        if cols != GBA_W as usize || rows != GBA_H as usize {
+        let bpp = match h.format {
+            PixelFormat::Xrgb8888 => 4,
+            PixelFormat::Rgb565 => 2,
+        };
+        if pitch < width as usize * bpp
+            || pitch
+                .checked_mul(height as usize)
+                .is_none_or(|n| n > isize::MAX as usize)
+        {
+            return;
+        }
+        let (out_w, out_h) = if h.native_video {
+            (width, height)
+        } else {
+            (GBA_W, GBA_H)
+        };
+        let cols = width.min(out_w) as usize;
+        let rows = height.min(out_h) as usize;
+        let ox = (out_w as usize - cols) / 2;
+        let oy = (out_h as usize - rows) / 2;
+        h.video.resize((out_w * out_h * 4) as usize, 0);
+        h.geometry = FrameGeometry {
+            width: out_w,
+            height: out_h,
+            aspect: if h.native_video {
+                h.aspect
+            } else {
+                GBA_W as f32 / GBA_H as f32
+            },
+        };
+        if cols != out_w as usize || rows != out_h as usize {
             h.video.fill(0);
         }
         for y in 0..rows {
             let src = (data as *const u8).add(y * pitch);
-            let row = ((y + oy) * GBA_W as usize + ox) * 4;
+            let row = ((y + oy) * out_w as usize + ox) * 4;
             match h.format {
                 PixelFormat::Xrgb8888 => {
                     ptr::copy_nonoverlapping(src, h.video.as_mut_ptr().add(row), cols * 4);
@@ -366,11 +479,19 @@ unsafe extern "C" fn audio_batch(data: *const i16, frames: usize) -> usize {
 
 unsafe extern "C" fn input_poll() {}
 
-unsafe extern "C" fn input_state(port: c_uint, device: c_uint, _index: c_uint, id: c_uint) -> i16 {
-    if device != DEVICE_JOYPAD {
-        return 0;
-    }
+unsafe extern "C" fn input_state(port: c_uint, device: c_uint, index: c_uint, id: c_uint) -> i16 {
     with_host(|h| {
+        if device == DEVICE_ANALOG && port == 0 {
+            return h
+                .sticks
+                .get(index as usize)
+                .and_then(|s| s.get(id as usize))
+                .copied()
+                .unwrap_or(0);
+        }
+        if device != DEVICE_JOYPAD || index != 0 {
+            return 0;
+        }
         let Some(&input) = h.inputs.get(port as usize) else {
             return 0;
         };
@@ -388,8 +509,10 @@ pub struct LibretroCore {
     host: Box<Host>,
     rom: Vec<u8>,
     rom_path: Option<CString>,
-    av: AvInfo,
+    controller: Controller,
     loaded: bool,
+    gb_buttons: bool,
+    states_enabled: bool,
     state_size: Option<(usize, usize)>,
     _lib: Library,
 }
@@ -400,6 +523,22 @@ fn cdir(path: &Path) -> Result<CString, CoreError> {
 }
 
 impl LibretroCore {
+    /// Opt in before loading non-GB software cores. GB keeps its existing centred canvas.
+    pub fn set_native_video(&mut self) {
+        self.host.native_video = true;
+    }
+
+    /// Preserve genuine X/Y/trigger/click bits instead of treating X/Y as GB turbo.
+    pub fn set_native_input(&mut self) {
+        self.gb_buttons = false;
+    }
+
+    /// Keep cores with unverified state codecs on ordinary in-game saves only.
+    pub fn disable_states(&mut self) {
+        self.states_enabled = false;
+        self.state_size = None;
+    }
+
     pub fn open(dylib: &Path) -> Result<Self, CoreError> {
         let dir = dylib.parent().unwrap_or(Path::new(".")).to_path_buf();
         Self::open_with(dylib, &dir, &dir)
@@ -485,9 +624,19 @@ impl LibretroCore {
         }
         let mut host = Box::new(Host {
             video: vec![0; VIDEO_BYTES],
+            native_video: false,
+            geometry: FrameGeometry::default(),
+            aspect: GBA_W as f32 / GBA_H as f32,
+            av: AvInfo {
+                fps: 0.0,
+                sample_rate: 0.0,
+            },
             format: PixelFormat::Xrgb8888,
             audio: Vec::new(),
             inputs: [0; 2],
+            sticks: [[0; 2]; 2],
+            dualshock_device: DEVICE_DUALSHOCK,
+            disk: None,
             system_dir: cdir(system_dir)?,
             save_dir: cdir(save_dir)?,
             rumble: Rumble::default(),
@@ -518,11 +667,10 @@ impl LibretroCore {
             host,
             rom: Vec::new(),
             rom_path: None,
-            av: AvInfo {
-                fps: 0.0,
-                sample_rate: 0.0,
-            },
+            controller: Controller::Digital,
             loaded: false,
+            gb_buttons: true,
+            states_enabled: true,
             state_size: None,
             _lib: lib,
         })
@@ -577,6 +725,10 @@ impl Drop for LibretroCore {
 }
 
 impl RetroCore for LibretroCore {
+    fn uses_gb_buttons(&self) -> bool {
+        self.gb_buttons
+    }
+
     fn set_option(&mut self, key: &str, value: &str) {
         LibretroCore::set_option(self, key, value);
     }
@@ -584,14 +736,26 @@ impl RetroCore for LibretroCore {
     fn load(&mut self, rom: &Path) -> Result<(), CoreError> {
         self.unload();
         self.state_size = None;
-        self.rom = std::fs::read(rom)?;
+        let mut system = SystemInfo::default();
+        unsafe { (self.api.get_system_info)(&mut system) };
+        if system.need_fullpath {
+            // Disc images stay on disk. The core owns track/archive handling.
+            std::fs::File::open(rom)?;
+            self.rom.clear();
+        } else {
+            self.rom = std::fs::read(rom)?;
+        }
         self.rom_path = Some(
             CString::new(rom.as_os_str().as_encoded_bytes())
                 .map_err(|_| CoreError::Load("rom path contains a nul".into()))?,
         );
         let info = GameInfo {
             path: self.rom_path.as_ref().map_or(ptr::null(), |p| p.as_ptr()),
-            data: self.rom.as_ptr() as *const c_void,
+            data: if system.need_fullpath {
+                ptr::null()
+            } else {
+                self.rom.as_ptr().cast()
+            },
             size: self.rom.len(),
             meta: ptr::null(),
         };
@@ -606,12 +770,21 @@ impl RetroCore for LibretroCore {
         }
         self.loaded = true;
         let mut av = SystemAvInfo::default();
-        unsafe { (self.api.get_system_av_info)(&mut av) };
-        self.av = AvInfo {
+        {
+            let _a = Active::bind(&mut self.host);
+            unsafe { (self.api.get_system_av_info)(&mut av) };
+        }
+        if !self.host.set_geometry(&av.geometry) {
+            self.unload();
+            return Err(CoreError::Unsupported(
+                "invalid software frame geometry".into(),
+            ));
+        }
+        self.host.av = AvInfo {
             fps: av.timing.fps,
             sample_rate: av.timing.sample_rate,
         };
-        unsafe { (self.api.set_controller_port_device)(0, DEVICE_JOYPAD) };
+        self.set_controller(self.controller);
         Ok(())
     }
 
@@ -641,6 +814,75 @@ impl RetroCore for LibretroCore {
         unsafe { report_audio_status(skip) };
     }
 
+    fn sync_to_display(&self) -> bool {
+        !self.host.native_video
+    }
+
+    fn set_analog(&mut self, sticks: [[i16; 2]; 2]) {
+        self.host.sticks = sticks;
+    }
+
+    fn set_controller(&mut self, controller: Controller) {
+        self.controller = controller;
+        let device = match controller {
+            Controller::Digital => DEVICE_JOYPAD,
+            Controller::DualShock => self.host.dualshock_device,
+        };
+        let _a = Active::bind(&mut self.host);
+        unsafe { (self.api.set_controller_port_device)(0, device) };
+    }
+
+    fn disc_count(&mut self) -> u32 {
+        if !self.loaded {
+            return 0;
+        }
+        let count = self.host.disk.and_then(|d| d.get_num_images);
+        let _a = Active::bind(&mut self.host);
+        count.map_or(0, |count| unsafe { count() })
+    }
+
+    fn selected_disc(&mut self) -> u32 {
+        let selected = self.host.disk.and_then(|d| d.get_image_index);
+        let _a = Active::bind(&mut self.host);
+        selected.map_or(0, |selected| unsafe { selected() })
+    }
+
+    fn select_disc(&mut self, index: u32) -> Result<(), CoreError> {
+        if index >= self.disc_count() {
+            return Err(CoreError::Load("disc index is out of range".into()));
+        }
+        let disk = self
+            .host
+            .disk
+            .ok_or_else(|| CoreError::Unsupported("core has no disc control".into()))?;
+        let (Some(eject), Some(is_ejected), Some(select)) = (
+            disk.set_eject_state,
+            disk.get_eject_state,
+            disk.set_image_index,
+        ) else {
+            return Err(CoreError::Unsupported("incomplete disc control".into()));
+        };
+        let _a = Active::bind(&mut self.host);
+        unsafe {
+            let was_ejected = is_ejected();
+            if !was_ejected && !eject(true) {
+                return Err(CoreError::Load("core refused to eject disc".into()));
+            }
+            let selected = select(index);
+            let restored = was_ejected || eject(false);
+            if !selected || !restored {
+                return Err(CoreError::Load(
+                    "core refused disc change or reinsertion".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn video_geometry(&self) -> FrameGeometry {
+        self.host.geometry
+    }
+
     fn video_xrgb8888(&self) -> &[u8] {
         &self.host.video
     }
@@ -649,7 +891,16 @@ impl RetroCore for LibretroCore {
         std::mem::take(&mut self.host.audio)
     }
 
+    fn supports_states(&self) -> bool {
+        self.states_enabled
+    }
+
     fn serialize(&mut self) -> Result<Vec<u8>, CoreError> {
+        if !self.states_enabled {
+            return Err(CoreError::Unsupported(
+                "save states are disabled for this core".into(),
+            ));
+        }
         let chip = unsafe { (self.api.get_memory_size)(MEMORY_SAVE_RAM) };
         if let Some(buf) = self
             .state_size
@@ -668,8 +919,18 @@ impl RetroCore for LibretroCore {
     }
 
     fn unserialize(&mut self, data: &[u8]) -> Result<(), CoreError> {
+        if !self.states_enabled {
+            return Err(CoreError::Unsupported(
+                "save states are disabled for this core".into(),
+            ));
+        }
         if data.is_empty() {
             return Err(CoreError::State("empty state".into()));
+        }
+        // PCSX's stream reader ignores the supplied buffer length. Do not pass
+        // truncated or foreign-sized native states across that FFI boundary.
+        if self.host.native_video && data.len() != unsafe { (self.api.serialize_size)() } {
+            return Err(CoreError::State("native state size mismatch".into()));
         }
         let ok = {
             let _a = Active::bind(&mut self.host);
@@ -712,7 +973,7 @@ impl RetroCore for LibretroCore {
     }
 
     fn av_info(&self) -> AvInfo {
-        self.av
+        self.host.av
     }
 
     fn rumble(&self) -> Rumble {
@@ -749,9 +1010,19 @@ mod tests {
     fn host_with(options: HashMap<String, CString>, options_dirty: bool) -> Box<Host> {
         Box::new(Host {
             video: vec![0; VIDEO_BYTES],
+            native_video: false,
+            geometry: FrameGeometry::default(),
+            aspect: GBA_W as f32 / GBA_H as f32,
+            av: AvInfo {
+                fps: 0.0,
+                sample_rate: 0.0,
+            },
             format: PixelFormat::Xrgb8888,
             audio: Vec::new(),
             inputs: [0; 2],
+            sticks: [[0; 2]; 2],
+            dualshock_device: DEVICE_DUALSHOCK,
+            disk: None,
             system_dir: CString::new(".").unwrap(),
             save_dir: CString::new(".").unwrap(),
             rumble: Rumble::default(),

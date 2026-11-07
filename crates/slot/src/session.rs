@@ -39,6 +39,7 @@ pub struct Session {
     reloading: bool,
     driven: bool,
     sunlight_sent: Option<u8>,
+    controller_sent: Option<slot_retro::Controller>,
     buzz_ends: Option<Instant>,
 }
 
@@ -67,6 +68,7 @@ impl Session {
             reloading: false,
             driven: false,
             sunlight_sent: None,
+            controller_sent: None,
             buzz_ends: None,
         };
         // A game left running comes straight back. Its core loads on its own thread, so start it
@@ -195,6 +197,17 @@ impl Session {
         self.emu.as_ref().map_or(0, EmuHandle::frames_taken)
     }
 
+    pub fn set_analog(&self, sticks: [[i16; 2]; 2]) {
+        if let Some(emu) = &self.emu {
+            let sticks = if self.app.input_context() == slot_input::Context::Game {
+                sticks
+            } else {
+                [[0; 2]; 2]
+            };
+            emu.set_analog(sticks);
+        }
+    }
+
     pub fn game_visible(&self) -> bool {
         self.app.game_visible()
     }
@@ -269,12 +282,28 @@ impl Session {
             self.pad.apply(Action::GbaUp(btn));
         }
         if let Some(emu) = &self.emu {
-            let mask = self.pad.mask(&self.app.controls());
+            let mask = self
+                .pad
+                .mask(&self.app.controls(), self.app.playing_platform());
             if trace() && mask.0 != self.sent {
                 eprintln!("slot: pad {:#06x}", mask.0);
             }
             self.sent = mask.0;
             emu.set_input(mask);
+            if self.app.playing_platform() == Platform::Ps {
+                let controller = self.app.ps_controller();
+                if self.controller_sent != Some(controller) {
+                    emu.set_controller(controller);
+                    self.controller_sent = Some(controller);
+                }
+                if let Some(index) = self.app.take_disc() {
+                    if !emu.select_disc(index) {
+                        self.app.disc_change_failed();
+                    }
+                }
+                let (count, selected) = emu.discs();
+                self.app.set_disc_info(count, selected);
+            }
         }
     }
 
@@ -358,9 +387,10 @@ impl Session {
         }
         if let Some(blending) = self.app.take_blending() {
             if let Some(emu) = &self.emu {
-                let (key, value) = crate::core::blend_option(self.app.core(), blending);
-                emu.set_option(key, value);
-                recoloured = true;
+                if let Some((key, value)) = crate::core::blend_option(self.app.core(), blending) {
+                    emu.set_option(key, value);
+                    recoloured = true;
+                }
             }
         }
         if let (Some(level), Some(emu)) = (self.app.sunlight(), &self.emu) {
@@ -596,18 +626,20 @@ impl Session {
         let join = std::thread::Builder::new()
             .name("slot-open".into())
             .spawn(move || {
-                let resume = match clean {
+                let resume = match clean || core == slot_store::Core::SwanStation {
                     true => Ok(None),
                     false => persist::read_resume(&root, platform, core, &stem),
                 };
                 launch("resume state read");
                 let palette = crate::core::palette_for(chosen, platform, &rom, player);
                 let mut opened = open_core(
-                    &root, core, platform, serial, colour, blending, palette, player,
+                    &root, core, platform, &rom, serial, colour, blending, palette, player,
                 );
-                crate::core::apply_game_boy_player(&mut *opened.core, core, platform, &rom);
+                if let Ok(opened) = &mut opened {
+                    crate::core::apply_game_boy_player(&mut *opened.core, core, platform, &rom);
+                }
                 launch("core opened");
-                let sav = persist::read_sav(&root, platform, &stem);
+                let sav = persist::read_sav_for(&root, platform, core, &stem);
                 launch("save read");
                 Loaded {
                     opened,
@@ -635,18 +667,33 @@ impl Session {
         let Some(loaded) = loaded else {
             return true;
         };
+        let opened = match loaded.opened {
+            Ok(opened) => opened,
+            Err(error) => {
+                eprintln!("slot: {error}");
+                if matches!(error, slot_retro::CoreError::Unsupported(_)) {
+                    self.app.on_core_unavailable();
+                } else {
+                    self.app.on_core_failed();
+                }
+                return false;
+            }
+        };
         self.app.set_palette_live(loaded.palette_live);
-        self.app.set_named_core(loaded.opened.named);
+        self.app.set_named_core(opened.named);
         let ring = self.sink.ring();
         let sav = self.app.card_read("save", loaded.sav);
         let resume = self.app.card_read("resume", loaded.resume);
         let (sav_unread, resume_unread) = (sav.is_none(), resume.is_none());
-        let (core, rom, sav, resume) = (
-            loaded.opened.core,
-            loaded.rom,
-            sav.flatten(),
-            resume.flatten(),
-        );
+        let (mut core, rom, sav, resume) =
+            (opened.core, loaded.rom, sav.flatten(), resume.flatten());
+        self.controller_sent = None;
+        self.app.set_disc_info(0, 0);
+        if loaded.platform == Platform::Ps {
+            let controller = self.app.ps_controller();
+            core.set_controller(controller);
+            self.controller_sent = Some(controller);
+        }
         let emu = match loaded.player.filter(|_| loaded.platform == Platform::Gba) {
             Some(p) => EmuHandle::spawn_linked(core, rom, ring, sav, resume, p),
             None => EmuHandle::spawn(core, rom, ring, sav, resume),
@@ -700,7 +747,7 @@ impl Session {
 }
 
 struct Loaded {
-    opened: Opened,
+    opened: Result<Opened, slot_retro::CoreError>,
     rom: PathBuf,
     platform: Platform,
     player: Option<u8>,

@@ -157,3 +157,88 @@ fn the_same_stem_on_two_platforms_is_two_carts_with_two_labels() {
         "the GBA cart borrowed the Game Boy label"
     );
 }
+
+#[test]
+fn a_valid_ps1_playlist_is_one_cart_and_native_formats_keep_distinct_identities() {
+    let d = tmp_root();
+    let ps = d.path().join("Games/PS");
+    let pico = d.path().join("Games/PICO8");
+    std::fs::create_dir_all(&ps).unwrap();
+    std::fs::create_dir_all(&pico).unwrap();
+    for name in ["First.chd", "Second.pbp", "Solo.chd", "Solo.pbp"] {
+        std::fs::write(ps.join(name), b"authored").unwrap();
+    }
+    std::fs::write(ps.join("Set.m3u"), "# discs\nFirst.chd\nSecond.pbp\n").unwrap();
+    std::fs::write(pico.join("Cart.p8"), b"text").unwrap();
+    std::fs::write(pico.join("Cart.p8.png"), b"encoded").unwrap();
+    let carts = scan(d.path()).unwrap();
+    let names: Vec<_> = carts.iter().map(|c| c.stem.as_str()).collect();
+    assert_eq!(
+        names,
+        ["Set.m3u", "Solo.chd", "Solo.pbp", "Cart.p8", "Cart.p8.png"]
+    );
+    assert_eq!(
+        slot_store::disc::contents(&ps, &ps.join("Set.m3u")).unwrap(),
+        [ps.join("First.chd"), ps.join("Second.pbp")]
+    );
+    std::fs::write(ps.join("Set.m3u"), "First.chd\nMissing.chd\n").unwrap();
+    assert_eq!(
+        scan(d.path()).unwrap().len(),
+        7,
+        "invalid playlists must not hide usable discs"
+    );
+}
+
+#[test]
+fn ps1_disc_validation_bounds_descriptors_and_rejects_missing_or_escaping_members() {
+    let d = tmp_root();
+    let ps = d.path().join("Games/PS");
+    std::fs::create_dir_all(&ps).unwrap();
+    std::fs::write(ps.join("track.bin"), b"authored track").unwrap();
+    let cue = ps.join("Disc.cue");
+    std::fs::write(
+        &cue,
+        "FILE \"track.bin\" BINARY\n TRACK 01 MODE1/2048\n INDEX 01 00:00:00\n",
+    )
+    .unwrap();
+    assert_eq!(
+        slot_store::disc::contents(&ps, &cue).unwrap(),
+        std::slice::from_ref(&cue)
+    );
+    for descriptor in [
+        "FILE \"missing.bin\" BINARY\n",
+        "FILE \"../outside.bin\" BINARY\n",
+        "FILE \"/outside.bin\" BINARY\n",
+        "FILE \"..\\outside.bin\" BINARY\n",
+        "TRACK 01 MODE1/2048\n",
+    ] {
+        std::fs::write(&cue, descriptor).unwrap();
+        assert!(
+            slot_store::disc::contents(&ps, &cue).is_err(),
+            "{descriptor}"
+        );
+    }
+    std::fs::write(&cue, vec![b' '; 65537]).unwrap();
+    assert!(slot_store::disc::contents(&ps, &cue).is_err());
+    let playlist = ps.join("Set.m3u");
+    for descriptor in ["", "Set.m3u\n", "Other.m3u\n"] {
+        std::fs::write(&playlist, descriptor).unwrap();
+        assert!(slot_store::disc::contents(&ps, &playlist).is_err());
+    }
+    std::fs::write(ps.join("One.chd"), b"authored").unwrap();
+    std::fs::write(&playlist, "One.chd\n".repeat(15)).unwrap();
+    assert_eq!(
+        slot_store::disc::contents(&ps, &playlist).unwrap().len(),
+        15
+    );
+    std::fs::write(&playlist, "One.chd\n".repeat(16)).unwrap();
+    assert!(slot_store::disc::contents(&ps, &playlist).is_err());
+    let outside = d.path().join("outside.bin");
+    std::fs::write(&outside, b"outside").unwrap();
+    std::os::unix::fs::symlink(&outside, ps.join("escape.bin")).unwrap();
+    std::fs::write(&cue, "FILE \"escape.bin\" BINARY\n").unwrap();
+    assert!(slot_store::disc::contents(&ps, &cue).is_err());
+    // A symlink's extension must not bypass parsing of the name the core sees.
+    std::os::unix::fs::symlink(ps.join("One.chd"), ps.join("Alias.m3u")).unwrap();
+    assert!(slot_store::disc::contents(&ps, &ps.join("Alias.m3u")).is_err());
+}

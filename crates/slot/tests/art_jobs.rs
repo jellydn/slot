@@ -134,6 +134,60 @@ fn unknown_rom_is_missed() {
 }
 
 #[test]
+fn unindexed_native_games_are_missed_without_requesting_images() {
+    use slot_store::Platform;
+
+    // Unsupported PNG shape, rather than a local PICO-8 label.
+    let cart_png = encode(160, 204, &[90, 60, 200, 255].repeat(160 * 204));
+    for (platform, name, bytes) in [
+        (Platform::Ps, "Authored.chd", b"MComprHDfixture".as_slice()),
+        (Platform::Ps, "Authored.pbp", b"\0PBPfixture".as_slice()),
+        (
+            Platform::Pico8,
+            "Authored.p8",
+            b"pico-8 cartridge // fixture\nversion 42\n__lua__\n".as_slice(),
+        ),
+        (Platform::Pico8, "Authored.p8.png", cart_png.as_slice()),
+    ] {
+        let d = tempfile::tempdir().unwrap();
+        let games = d.path().join("Games").join(platform.dir_name());
+        std::fs::create_dir_all(&games).unwrap();
+        std::fs::write(games.join(name), bytes).unwrap();
+        // No provider entry and no usable local label: never guess an image.
+        let index = index_for(&[(
+            crc32fast::hash(&rom(3)),
+            r#""support-texture":"GBA/support-texture/Authored.png""#,
+        )]);
+        assert!(index.get(crc32fast::hash(bytes)).is_none());
+        let mut events = Vec::new();
+        fetch_missing_with(
+            d.path(),
+            Kind::Real,
+            &index,
+            &|url| panic!("unindexed native game requested {url}"),
+            &|| false,
+            &mut |e| events.push(e),
+        );
+        assert_eq!(
+            events,
+            vec![
+                ArtEvent::Counted(1),
+                ArtEvent::Missed { stem: name.into() },
+                ArtEvent::Done {
+                    landed: 0,
+                    missed: vec![name.into()],
+                },
+            ]
+        );
+        assert!(
+            !slot::art::make::label_path(d.path(), &slot_store::scan(d.path()).unwrap()[0])
+                .exists()
+        );
+        assert_eq!(std::fs::read(games.join(name)).unwrap(), bytes);
+    }
+}
+
+#[test]
 fn html_from_the_server_is_missed() {
     let a = rom(4);
     let d = card(&[("A.gba", &a)]);

@@ -20,6 +20,52 @@ pub const ABS_LSY: u16 = 0x03;
 
 pub const STICK_DEADZONE: i32 = 2048;
 
+/// Stock TRIMUI Player1 ranges captured on TG5040; not an Anbernic axis layout.
+#[derive(Default)]
+pub struct TspAnalog {
+    sticks: [[i16; 2]; 2],
+    triggers: [bool; 2],
+}
+
+impl TspAnalog {
+    pub fn sticks(&self) -> [[i16; 2]; 2] {
+        self.sticks
+    }
+
+    pub fn feed(&mut self, ev: Ev) -> Option<RawEvent> {
+        if ev.kind != EV_ABS {
+            return None;
+        }
+        let axis = match ev.code {
+            0 => Some((0, 0)),
+            1 => Some((0, 1)),
+            3 => Some((1, 0)),
+            4 => Some((1, 1)),
+            _ => None,
+        };
+        if let Some((stick, axis)) = axis {
+            self.sticks[stick][axis] = if (-STICK_DEADZONE..=STICK_DEADZONE).contains(&ev.value) {
+                0
+            } else {
+                ev.value.clamp(-32767, 32767) as i16
+            };
+        } else if matches!(ev.code, 2 | 5) {
+            let index = usize::from(ev.code == 5);
+            let down = ev.value >= 128;
+            if self.triggers[index] != down {
+                self.triggers[index] = down;
+                let button = [Btn::L2, Btn::R2][index];
+                return Some(if down {
+                    RawEvent::Down(button)
+                } else {
+                    RawEvent::Up(button)
+                });
+            }
+        }
+        None
+    }
+}
+
 const LEFT_STICK_TARGETS: [&str; 11] = [
     "rg34xxsp",
     "rg35xxh",

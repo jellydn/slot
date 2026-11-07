@@ -104,6 +104,45 @@ fn composed(f: &mut Frontend, c: &mut Compositor, name: &str) -> Vec<u8> {
 }
 
 #[test]
+fn ps1_rewind_menu_renders_its_default_and_explicit_choice() {
+    let surface = HeadlessSurface::new().expect("headless render surface");
+    let mut c = Compositor::new(&surface).expect("compositor");
+    let d = tmp_root_with_carts(&["Emerald", "Fusion"]);
+    clocked(d.path());
+    let mut f = Frontend::boot(Box::new(SimPlatform::at(d.path().to_path_buf())));
+    f.upload_faces(&mut c);
+    f.upload_bezel(&mut c, (720, 480));
+    f.app_mut().set_platform(slot_store::Platform::Ps);
+    f.app_mut().set_core(slot_store::Core::PcsxRearmed);
+    let mut input = Script(VecDeque::new());
+    tap(&mut f, &mut input, Btn::Menu);
+    let mut path = vec![QuickRow::Rewind];
+    while let Some(parent) = path.last().and_then(|row| row.parent()) {
+        path.push(parent);
+    }
+    for (depth, row) in path.iter().rev().enumerate() {
+        if depth > 0 {
+            tap(&mut f, &mut input, Btn::A);
+        }
+        for _ in 0..row.position(&f.app().hidden_rows()) {
+            tap(&mut f, &mut input, Btn::Down);
+        }
+    }
+    assert_eq!(f.app().quick_menu(), Some(QuickRow::Rewind));
+    assert_eq!(
+        f.app().quick_value(QuickRow::Rewind),
+        Some(slot_ui::QuickValue::Off)
+    );
+    composed(&mut f, &mut c, "ps1-rewind-off");
+    tap(&mut f, &mut input, Btn::Right);
+    assert_eq!(
+        f.app().quick_value(QuickRow::Rewind),
+        Some(slot_ui::QuickValue::On)
+    );
+    composed(&mut f, &mut c, "ps1-rewind-on");
+}
+
+#[test]
 fn the_quick_menu_renders_full_screen() {
     let Ok(surface) = HeadlessSurface::new() else {
         return;
@@ -1013,4 +1052,146 @@ fn the_tools_page_stays_shut_until_connected() {
     assert!(!f.app().wifi_up());
     assert_eq!(f.app().quick_menu(), Some(QuickRow::Network));
     assert!(f.app().update_shown());
+}
+
+#[test]
+fn stock_brightness_renders_readback_or_unavailable_without_changing_nonstock() {
+    use slot_ui::QuickValue;
+
+    let surface = HeadlessSurface::new().expect("headless display");
+    let mut c = Compositor::new(&surface).expect("compositor");
+    for (name, stock, readback) in [
+        ("nonstock-level", false, false),
+        ("stock-readback", true, true),
+        ("stock-unavailable", true, false),
+    ] {
+        let d = tmp_root_with_carts(&[]);
+        clocked(d.path());
+        let mut f = Frontend::boot(Box::new(SimPlatform::at(d.path().to_path_buf())));
+        if stock {
+            f.app_mut().set_stock_controls_owned();
+        }
+        if readback {
+            let (power, level) = common::panel(d.path(), std::time::Duration::from_secs(60));
+            level.store(7, std::sync::atomic::Ordering::Relaxed);
+            f.app_mut().set_power(power);
+        }
+        f.app_mut().set_panel((640, 480));
+        c.fit((640, 480));
+        f.upload_faces(&mut c);
+        let mut input = Script(VecDeque::new());
+        tap(&mut f, &mut input, Btn::Menu);
+        for _ in 0..QuickRow::Screen.position(&f.app().hidden_rows()) {
+            tap(&mut f, &mut input, Btn::Down);
+        }
+        tap(&mut f, &mut input, Btn::A);
+        assert_eq!(f.app().quick_menu(), Some(QuickRow::ScreenGeneral));
+        tap(&mut f, &mut input, Btn::A);
+        assert_eq!(f.app().quick_menu(), Some(QuickRow::Brightness));
+        assert_eq!(
+            f.app().quick_value(QuickRow::Brightness) == Some(QuickValue::Unavailable),
+            stock && !readback
+        );
+        if readback {
+            assert_eq!(
+                f.app().quick_value(QuickRow::Brightness),
+                Some(QuickValue::Level6)
+            );
+            tap(&mut f, &mut input, Btn::Right);
+            assert_eq!(
+                f.app().quick_value(QuickRow::Brightness),
+                Some(QuickValue::Level7)
+            );
+        }
+        f.compose(&mut c);
+        f.compose(&mut c);
+        assert_eq!(c.frame_size(), (640, 480));
+        if let Ok(dir) = std::env::var("SCRATCH_PNG_DIR") {
+            let file = std::fs::File::create(format!("{dir}/brightness-{name}-640.png")).unwrap();
+            let mut encoder = png::Encoder::new(file, 640, 480);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder
+                .write_header()
+                .unwrap()
+                .write_image_data(&c.read_frame())
+                .unwrap();
+        }
+    }
+}
+
+#[test]
+fn native_game_settings_expose_ps1_controls_and_pico8_states_but_not_rewind() {
+    use slot_input::Action;
+    use slot_store::Platform;
+    use slot_ui::QuickValue;
+
+    let surface = HeadlessSurface::new().expect("headless display");
+    let mut c = Compositor::new(&surface).expect("compositor");
+    for (platform, name) in [(Platform::Ps, "ps1"), (Platform::Pico8, "pico8")] {
+        let d = tmp_root_with_carts(&[]);
+        clocked(d.path());
+        let mut f = Frontend::boot(Box::new(SimPlatform::at(d.path().to_path_buf())));
+        f.app_mut().set_platform(platform);
+        f.app_mut().set_disc_info(2, 1);
+        f.app_mut().set_panel((640, 480));
+        c.fit((640, 480));
+        f.upload_faces(&mut c);
+        let press = |f: &mut Frontend, button| {
+            f.app_mut().apply(Action::GbaDown(button));
+            f.app_mut().apply(Action::GbaUp(button));
+        };
+        f.app_mut().apply(Action::QuickMenu);
+        for _ in 0..QuickRow::Game.position(&f.app().hidden_rows()) {
+            press(&mut f, Btn::Down);
+        }
+        assert_eq!(f.app().quick_menu(), Some(QuickRow::Game));
+        press(&mut f, Btn::A);
+        let hidden = f.app().hidden_rows();
+        if platform == Platform::Ps {
+            assert!(!hidden.contains(&QuickRow::PsController));
+            assert!(!hidden.contains(&QuickRow::PsDisc));
+            assert_eq!(
+                f.app().quick_value(QuickRow::PsController),
+                Some(QuickValue::Digital)
+            );
+            for _ in 0..30 {
+                if f.app().quick_menu() == Some(QuickRow::PsController) {
+                    break;
+                }
+                press(&mut f, Btn::Down);
+            }
+            assert_eq!(f.app().quick_menu(), Some(QuickRow::PsController));
+            press(&mut f, Btn::Right);
+            assert_eq!(f.app().ps_controller(), slot_retro::Controller::DualShock);
+            assert!(slot_store::read_slot_state(d.path()).ps_dualshock);
+        } else {
+            assert!(f.app().may_load_state());
+            assert!(!f.app().may_rewind());
+            assert!(!f.app().records_rewind());
+            for row in [QuickRow::States, QuickRow::AutoLoad, QuickRow::EjectSave] {
+                assert!(!hidden.contains(&row));
+            }
+            assert!(hidden.contains(&QuickRow::Rewind));
+            assert_eq!(
+                f.app().quick_value(QuickRow::Rewind),
+                Some(QuickValue::Unavailable)
+            );
+        }
+        f.compose(&mut c);
+        f.compose(&mut c);
+        assert_eq!(c.frame_size(), (640, 480));
+        if let Ok(dir) = std::env::var("SCRATCH_PNG_DIR") {
+            let file =
+                std::fs::File::create(format!("{dir}/native-settings-{name}-640.png")).unwrap();
+            let mut encoder = png::Encoder::new(file, 640, 480);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder
+                .write_header()
+                .unwrap()
+                .write_image_data(&c.read_frame())
+                .unwrap();
+        }
+    }
 }

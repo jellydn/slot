@@ -7,6 +7,30 @@ use slot_store::read_slot_state;
 use slot_ui::Icon;
 
 #[test]
+fn stock_controls_leave_volume_to_firmware_without_a_second_gain_or_saved_level() {
+    let d = tmp_root_with_carts(&["Emerald"]);
+    let mut a = app_playing_with_volume(d.path(), 35);
+    a.apply(Action::MuteToggle);
+    a.flush_state();
+    let before = read_slot_state(d.path());
+    a.set_stock_controls_owned();
+    assert_eq!(
+        a.output_volume(),
+        100,
+        "stock audio must have unity PCM gain"
+    );
+    assert!(!a.muted(), "a saved Slot mute is not hardware readback");
+    for action in [Action::VolumeUp, Action::VolumeDown, Action::MuteToggle] {
+        a.apply(action);
+        assert_eq!(a.output_volume(), 100);
+    }
+    a.flush_state();
+    let after = read_slot_state(d.path());
+    assert_eq!((after.volume, after.muted), (before.volume, before.muted));
+    assert!(matches!(a.phase(), Phase::Playing { .. }));
+}
+
+#[test]
 fn levels_clamp_and_persist() {
     let d = tmp_root_with_carts(&["Emerald"]);
     let mut a = boot(d.path());

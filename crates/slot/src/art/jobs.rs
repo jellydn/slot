@@ -152,6 +152,9 @@ fn label_for(
     index: &ArtIndex,
     fetch: &mut dyn FnMut(&str) -> Result<Vec<u8>, UpdateFail>,
 ) -> Result<Option<Vec<u8>>, UpdateFail> {
+    if cart.platform == Platform::Pico8 {
+        return Ok(local_label(cart));
+    }
     let Ok(crc) = rom::rom_crc(&cart.rom) else {
         return Ok(None);
     };
@@ -170,6 +173,16 @@ fn label_for(
         }
     }
     Ok(None)
+}
+
+fn local_label(cart: &Cart) -> Option<Vec<u8>> {
+    match super::pico8::read_label(&cart.rom) {
+        Ok(png) => Some(png),
+        Err(e) => {
+            eprintln!("slot: PICO-8 label: {}: {e:?}", cart.stem);
+            None
+        }
+    }
 }
 
 enum Outcome {
@@ -239,6 +252,23 @@ pub fn fetch_missing_with(
 ) {
     let carts = rom::missing_art(root);
     emit(ArtEvent::Counted(carts.len()));
+    let (landed, missed, failed) =
+        fetch_carts_with(root, &carts, kind, index, fetch, cancelled, emit);
+    match failed {
+        Some(e) => emit(ArtEvent::Failed(e)),
+        None => emit(ArtEvent::Done { landed, missed }),
+    }
+}
+
+fn fetch_carts_with(
+    root: &Path,
+    carts: &[Cart],
+    kind: Kind,
+    index: &ArtIndex,
+    fetch: &(dyn Fn(&str) -> Result<Vec<u8>, UpdateFail> + Sync),
+    cancelled: &(dyn Fn() -> bool + Sync),
+    emit: &mut dyn FnMut(ArtEvent),
+) -> (usize, Vec<String>, Option<UpdateFail>) {
     let next = AtomicUsize::new(0);
     let lost = AtomicBool::new(false);
     let (tx, rx) = channel::<Outcome>();
@@ -283,10 +313,7 @@ pub fn fetch_missing_with(
             }
         }
     });
-    match failed {
-        Some(e) => emit(ArtEvent::Failed(e)),
-        None => emit(ArtEvent::Done { landed, missed }),
-    }
+    (landed, missed, failed)
 }
 
 pub fn studio_art_with(
@@ -299,6 +326,25 @@ pub fn studio_art_with(
         stem: cart.stem.clone(),
         ..StudioArt::default()
     };
+    if cart.platform == Platform::Pico8 {
+        if let Some(png) = local_label(cart) {
+            let worn = std::fs::read(make::label_path(root, cart)).ok();
+            if worn
+                .as_deref()
+                .and_then(glance)
+                .zip(glance(&png))
+                .is_some_and(|(a, b)| looks_same(&a, &b))
+            {
+                art.duplicates = true;
+            } else {
+                let out = root.join(make::STUDIO_CACHE).join("real.png");
+                if make::write_replacing(&out, &png).is_ok() {
+                    art.real = Some(out);
+                }
+            }
+        }
+        return art;
+    }
     let Ok(crc) = rom::rom_crc(&cart.rom) else {
         return art;
     };
@@ -491,10 +537,18 @@ fn studio_run(root: &Path, cart: &Cart) -> StudioArt {
         failed: Some(e),
         ..StudioArt::default()
     };
+    let _ = slot_store::fs::remove_dir_all(root.join(make::STUDIO_CACHE));
+    if cart.platform == Platform::Pico8 {
+        return studio_art_with(
+            root,
+            cart,
+            &ArtIndex::parse("{}").unwrap(),
+            &mut |_| unreachable!(),
+        );
+    }
     if update::clock_is_wrong(update::now_unix()) {
         return failed(UpdateFail::Clock);
     }
-    let _ = slot_store::fs::remove_dir_all(root.join(make::STUDIO_CACHE));
     if let Err(e) = update::wait_online() {
         return failed(e);
     }
@@ -507,6 +561,32 @@ fn studio_run(root: &Path, cart: &Cart) -> StudioArt {
 }
 
 fn run(root: &Path, kind: Kind, cancel: &AtomicBool, tx: &Sender<ArtEvent>) {
+    let carts = rom::missing_art(root);
+    let _ = tx.send(ArtEvent::Counted(carts.len()));
+    let (local, remote): (Vec<_>, Vec<_>) = carts
+        .into_iter()
+        .partition(|c| c.platform == Platform::Pico8);
+    let empty = ArtIndex::parse("{}").unwrap();
+    let emit = &mut |e| {
+        let _ = tx.send(e);
+    };
+    let cancelled = || cancel.load(Ordering::SeqCst);
+    let (local_landed, mut missed, _) = fetch_carts_with(
+        root,
+        &local,
+        kind,
+        &empty,
+        &|_| unreachable!(),
+        &cancelled,
+        emit,
+    );
+    if remote.is_empty() || cancelled() {
+        emit(ArtEvent::Done {
+            landed: local_landed,
+            missed,
+        });
+        return;
+    }
     if update::clock_is_wrong(update::now_unix()) {
         let _ = tx.send(ArtEvent::Failed(UpdateFail::Clock));
         return;
@@ -517,23 +597,56 @@ fn run(root: &Path, kind: Kind, cancel: &AtomicBool, tx: &Sender<ArtEvent>) {
     }
     let agent = update::agent(update::DOWNLOAD_TIMEOUT);
     match load_index(root, &mut get_index) {
-        Ok(index) => fetch_missing_with(
-            root,
-            kind,
-            &index,
-            &|url| fetch_art(&agent, url),
-            &|| cancel.load(Ordering::SeqCst),
-            &mut |e| {
-                let _ = tx.send(e);
-            },
-        ),
+        Ok(index) => {
+            let (landed, remote_missed, failed) = fetch_carts_with(
+                root,
+                &remote,
+                kind,
+                &index,
+                &|url| fetch_art(&agent, url),
+                &cancelled,
+                emit,
+            );
+            missed.extend(remote_missed);
+            match failed {
+                Some(e) => emit(ArtEvent::Failed(e)),
+                None => emit(ArtEvent::Done {
+                    landed: local_landed + landed,
+                    missed,
+                }),
+            }
+        }
         Err(e) => {
             let _ = tx.send(ArtEvent::Failed(e));
         }
     }
 }
 
+pub fn fetch_local_label(root: &Path, cart: &Cart) -> Result<(), super::pico8::LabelError> {
+    use super::pico8::LabelError;
+    if cart.platform != Platform::Pico8 {
+        return Err(LabelError::Unsupported);
+    }
+    let path = make::label_path(root, cart);
+    if path.exists() {
+        return Ok(());
+    }
+    let png = super::pico8::read_label(&cart.rom)?;
+    make::write_new(&path, &png).map_err(|_| LabelError::Write)?;
+    let mut labeled = cart.clone();
+    labeled.label = Some(path);
+    let _ = crate::label_cache::label_art(root, &labeled);
+    Ok(())
+}
+
 pub fn fetch_label(root: &Path, cart: &Cart) -> Result<bool, UpdateFail> {
+    if cart.platform == Platform::Pico8 {
+        match fetch_local_label(root, cart) {
+            Ok(()) => return Ok(true),
+            Err(super::pico8::LabelError::Missing) => return Ok(false),
+            Err(_) => return Err(UpdateFail::Bad),
+        }
+    }
     if update::clock_is_wrong(update::now_unix()) {
         return Err(UpdateFail::Clock);
     }

@@ -2,7 +2,7 @@
 import { computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { HOME_TAGS, platformIcon, platformName } from '@/api/platforms'
-import { Wallpaper, Power } from 'lucide-vue-next'
+import { Wallpaper, Power, Disc3, Cpu } from 'lucide-vue-next'
 import ToolsTab from '@/components/tools/ToolsTab.vue'
 
 type Tab = 'content' | 'customization' | 'tools'
@@ -42,7 +42,9 @@ const cardClass = 'text-left cursor-pointer rounded-xl border border-border bg-c
           :class="[cardClass, 'flex flex-col items-center gap-5 px-6 py-8 sm:py-14']"
           @click="openPlatform(tag)"
         >
-          <img :src="platformIcon(tag)" :alt="platformName(tag)" class="h-32 sm:h-48 w-full object-contain" />
+          <Disc3 v-if="tag === 'PS'" aria-hidden="true" class="h-32 sm:h-48 w-full text-muted-foreground" :stroke-width="1" />
+          <Cpu v-else-if="tag === 'PICO8'" aria-hidden="true" class="h-32 sm:h-48 w-full text-muted-foreground" :stroke-width="1" />
+          <img v-else :src="platformIcon(tag)" :alt="platformName(tag)" class="h-32 sm:h-48 w-full object-contain" />
           <span class="slot-label text-sm text-center">{{ platformName(tag) }}</span>
         </button>
       </div>

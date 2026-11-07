@@ -15,6 +15,7 @@ use crate::label_cache;
 
 const MAX_RENDERS: usize = 2;
 const RENDER_VERSION: u32 = 1;
+const NATIVE_RENDER_VERSION: u32 = 2;
 const STOP_POLL: Duration = Duration::from_millis(50);
 const HASH_LEN: usize = 16;
 
@@ -49,7 +50,12 @@ pub(super) fn key(cart: &Cart) -> String {
     let shell = cart
         .shell
         .map_or_else(|| "auto".to_string(), |c| c.to_value());
-    let state = format!("{RENDER_VERSION}\0{}\0{mtime}\0{shell}", cart.stem);
+    let version = if cart.platform.native() {
+        NATIVE_RENDER_VERSION
+    } else {
+        RENDER_VERSION
+    };
+    let state = format!("{version}\0{}\0{mtime}\0{shell}", cart.stem);
     format!("{}{:016x}", stem_prefix(&cart.stem), fnv(state.as_bytes()))
 }
 
@@ -102,6 +108,9 @@ fn over(dst: &mut [u8], src: &[u8]) {
 }
 
 fn draw(root: &Path, cart: &Cart) -> CartFace {
+    if cart.platform.native() {
+        return native_face(cart);
+    }
     let mut cart = cart.clone();
     cart.read_header();
     let face = cart_face_with(&cart, label_cache::label_art(root, &cart));
@@ -112,6 +121,71 @@ fn draw(root: &Path, cart: &Cart) -> CartFace {
     over(&mut out.rgba, &cart_backing(gb_shell_of(&cart)).rgba);
     over(&mut out.rgba, &face.rgba);
     out
+}
+
+// Web-only sleeves: the native shelf keeps its existing cartridge rendering.
+fn native_face(cart: &Cart) -> CartFace {
+    let w = 320;
+    let h = if cart.platform == Platform::Pico8 {
+        410
+    } else {
+        320
+    };
+    let mut face = CartFace {
+        rgba: vec![0; (w * h * 4) as usize],
+        w,
+        h,
+    };
+    for y in 0..h {
+        for x in 0..w {
+            let colour = if x < 4 || x >= w - 4 || y < 4 || y >= h - 4 {
+                [105, 111, 120, 255]
+            } else {
+                [39, 43, 50, 255]
+            };
+            let at = ((y * w + x) * 4) as usize;
+            face.rgba[at..at + 4].copy_from_slice(&colour);
+        }
+    }
+    sleeve_text(&mut face, cart.platform.name(), 8, 28);
+    sleeve_text(&mut face, &slot_ui::label_text(cart), h - 56, 44);
+
+    // Decode the source, not the label cache: that cache crops to the GBA well.
+    if let Some((art, sw, sh)) = cart.label.as_deref().and_then(slot_ui::decode_png) {
+        if sw > 0 && sh > 0 {
+            let scale = ((w - 24) as f32 / sw as f32).min((h - 112) as f32 / sh as f32);
+            let aw = (sw as f32 * scale).round().max(1.0) as u32;
+            let ah = (sh as f32 * scale).round().max(1.0) as u32;
+            let left = (w - aw) / 2;
+            let top = 44 + (h - 112 - ah) / 2;
+            for y in 0..ah {
+                for x in 0..aw {
+                    let src = (((y * sh / ah) * sw + x * sw / aw) * 4) as usize;
+                    let dst = (((top + y) * w + left + x) * 4) as usize;
+                    over(&mut face.rgba[dst..dst + 4], &art[src..src + 4]);
+                }
+            }
+        }
+    }
+    face
+}
+
+fn sleeve_text(face: &mut CartFace, label: &str, top: u32, h: u32) {
+    let Some(font) = slot_ui::text::label_font() else {
+        return;
+    };
+    let w = face.w - 24;
+    let layout = slot_ui::text::fit_box(font, label, w as f32 - 8.0, h as f32, 2, 18.0, 8.0);
+    let mut rgba = vec![0; (w * h * 4) as usize];
+    slot_ui::text::draw_centred(&mut rgba, w, h, &layout, [229, 232, 237]);
+    for y in 0..h {
+        let src = (y * w * 4) as usize;
+        let dst = (((top + y) * face.w + 12) * 4) as usize;
+        over(
+            &mut face.rgba[dst..dst + (w * 4) as usize],
+            &rgba[src..src + (w * 4) as usize],
+        );
+    }
 }
 
 fn encode(face: &CartFace) -> Option<Vec<u8>> {

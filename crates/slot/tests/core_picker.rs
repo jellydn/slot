@@ -206,7 +206,7 @@ fn the_arrows_do_nothing_while_the_picker_waits() {
 
 #[test]
 fn a_game_boy_pair_hops_right_to_gambatte() {
-    let mut p = opened_on(Core::pair(Platform::Gb), Core::Mgba, 0);
+    let mut p = opened_on(Core::pair(Platform::Gb).unwrap(), Core::Mgba, 0);
     assert_eq!(p.press(Press::Right, 400), Outcome::Nothing);
     assert_eq!(p.seat(), Core::Gambatte);
     let mid = p.chip(400 + HOP_MS / 2);
@@ -223,7 +223,7 @@ fn a_game_boy_pair_hops_right_to_gambatte() {
 
 #[test]
 fn a_game_boy_pair_refuses_left_from_mgba() {
-    let mut p = opened_on(Core::pair(Platform::Gbc), Core::Mgba, 0);
+    let mut p = opened_on(Core::pair(Platform::Gbc).unwrap(), Core::Mgba, 0);
     assert_eq!(p.press(Press::Left, 400), Outcome::Refused);
     assert_eq!(p.seat(), Core::Mgba);
     assert_ne!(p.chip(400).shake, 0.0);
@@ -231,7 +231,7 @@ fn a_game_boy_pair_refuses_left_from_mgba() {
 
 #[test]
 fn a_gba_pair_never_seats_gambatte() {
-    let mut p = opened_on(Core::pair(Platform::Gba), Core::Mgba, 0);
+    let mut p = opened_on(Core::pair(Platform::Gba).unwrap(), Core::Mgba, 0);
     p.press(Press::Right, 400);
     assert_eq!(p.seat(), Core::Gpsp);
     p.press(Press::Left, 400 + HOP_MS);

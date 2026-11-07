@@ -36,12 +36,15 @@ pub enum Toast {
     Forgotten,
     RestartFailed,
     PoweroffFailed,
+    CoreUnavailable,
+    GameFailed,
+    DiscFailed,
     Palette(GbColors),
     Duplicate(QuickRow),
 }
 
 impl Toast {
-    const FIXED: [Toast; 28] = [
+    const FIXED: [Toast; 31] = [
         Toast::StateSaved,
         Toast::StateLoaded,
         Toast::GameReset,
@@ -70,6 +73,9 @@ impl Toast {
         Toast::Forgotten,
         Toast::RestartFailed,
         Toast::PoweroffFailed,
+        Toast::CoreUnavailable,
+        Toast::GameFailed,
+        Toast::DiscFailed,
     ];
 
     pub fn all() -> Vec<Toast> {
@@ -97,7 +103,10 @@ impl Toast {
             Toast::Duplicate(_)
             | Toast::ShotFailed
             | Toast::RestartFailed
-            | Toast::PoweroffFailed => Some(Icon::Alert),
+            | Toast::PoweroffFailed
+            | Toast::CoreUnavailable
+            | Toast::GameFailed
+            | Toast::DiscFailed => Some(Icon::Alert),
             Toast::ShotCaptured => Some(Icon::Camera),
             _ => None,
         }
@@ -166,6 +175,9 @@ impl Toast {
             Toast::Forgotten => "Network forgotten",
             Toast::RestartFailed => "Device reboot failed",
             Toast::PoweroffFailed => "Device shutdown failed",
+            Toast::CoreUnavailable => "Core missing or could not open",
+            Toast::GameFailed => "Game could not load",
+            Toast::DiscFailed => "Disc change failed",
             Toast::Palette(p) => p.label(),
             Toast::Duplicate(_) => "",
         }

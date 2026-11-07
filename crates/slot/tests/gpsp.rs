@@ -224,6 +224,7 @@ fn both_cores_are_told_about_colour_correction_in_their_own_words() {
             Core::Mgba => "gpsp_color_correction",
             Core::Gpsp => "mgba_color_correction",
             Core::Gambatte => "gambatte_gbc_color_correction",
+            Core::PcsxRearmed | Core::Fake08 => unreachable!("this test selects Game Boy cores"),
         };
         assert_eq!(
             core.option(theirs),
@@ -664,12 +665,14 @@ fn open_core_reaches_a_gpsp_named_dylib_under_the_content_roots_system_directory
         d.path(),
         Core::Gpsp,
         Platform::Gba,
+        &d.path().join("Games/GBA/Probe.gba"),
         "auto",
         false,
         Blending::Off,
         None,
         None,
     )
+    .unwrap()
     .core;
     core.load(&d.path().join("Games/GBA/Probe.gba"))
         .expect("the planted core refused the test rom");

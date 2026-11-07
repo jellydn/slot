@@ -82,7 +82,7 @@ pub struct Layout {
 pub fn layout(canvas_w: f32, platform: Platform) -> Layout {
     let narrow = canvas_w < 700.0;
     let (w, ratio) = match platform {
-        Platform::Gba | Platform::Gbav => (
+        Platform::Gba | Platform::Gbav | Platform::Ps | Platform::Pico8 => (
             if narrow {
                 268.0
             } else {
@@ -96,14 +96,16 @@ pub fn layout(canvas_w: f32, platform: Platform) -> Layout {
         ),
     };
     let inset = match platform {
-        Platform::Gba | Platform::Gbav => 0.0,
+        Platform::Gba | Platform::Gbav | Platform::Ps | Platform::Pico8 => 0.0,
         Platform::Gb | Platform::Gbc => w * GB_ART_INSET / GB_CART_W as f32,
     };
     let h = w * ratio;
     let (sin, cos) = CART_TILT.to_radians().abs().sin_cos();
     let wide = (w - 2.0 * inset) * cos + h * sin;
     let sticker = match platform {
-        Platform::Gba | Platform::Gbav => slot_ui::LABEL_W as f32 / slot_ui::CART_W as f32,
+        Platform::Gba | Platform::Gbav | Platform::Ps | Platform::Pico8 => {
+            slot_ui::LABEL_W as f32 / slot_ui::CART_W as f32
+        }
         Platform::Gb | Platform::Gbc => slot_ui::GB_LABEL_W as f32 / GB_CART_W as f32,
     };
     let printer = w * sticker + 2.0 * (SLIP_PAD + PRINTER_LIP);
@@ -607,7 +609,9 @@ pub fn well_of(cart: &slot_store::Cart) -> [u32; 4] {
 
 pub fn shelf_rect(canvas_w: f32, cart: &slot_store::Cart) -> [f32; 4] {
     let (w, h) = match cart.platform {
-        Platform::Gba | Platform::Gbav => (slot_ui::CART_W as f32, slot_ui::CART_H as f32),
+        Platform::Gba | Platform::Gbav | Platform::Ps | Platform::Pico8 => {
+            (slot_ui::CART_W as f32, slot_ui::CART_H as f32)
+        }
         Platform::Gb | Platform::Gbc => (GB_CART_W as f32, GB_CART_H as f32),
     };
     [(canvas_w - w) / 2.0, slot_ui::rest_y(h), w, h]

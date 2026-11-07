@@ -127,6 +127,10 @@ impl Compositor {
         self.game.upload(xrgb8888);
     }
 
+    pub fn upload_native_game(&mut self, xrgb8888: &[u8], size: (u32, u32), aspect: f32) -> bool {
+        self.game.upload_native(xrgb8888, size, aspect)
+    }
+
     pub fn draw_game(&mut self) {
         self.in_game_rect(|c| c.game.draw(&c.quad));
     }
@@ -137,18 +141,28 @@ impl Compositor {
             match *item {
                 Draw::Game => {
                     self.sprites.draw(&items[from..i], &self.quad);
+                    if self.game.native_video() {
+                        if let Some(bezel) = self.panel_bezel() {
+                            self.sprites.draw(&[bezel], &self.quad);
+                        }
+                    }
                     self.in_game_rect(|c| {
                         c.game.draw(&c.quad);
                         if c.panel_bezel().is_none() {
                             c.draw_game_bezel();
                         }
                     });
-                    if let Some(bezel) = self.panel_bezel() {
+                    if let Some(bezel) = self.panel_bezel().filter(|_| !self.game.native_video()) {
                         self.sprites.draw(&[bezel], &self.quad);
                     }
                 }
                 Draw::Shot { tex } => {
                     self.sprites.draw(&items[from..i], &self.quad);
+                    if self.game.native_video() {
+                        if let Some(bezel) = self.panel_bezel() {
+                            self.sprites.draw(&[bezel], &self.quad);
+                        }
+                    }
                     if let Some(tex) = self.sprites.source(tex) {
                         self.in_game_rect(|c| c.game.draw_still(tex, &c.quad));
                     }
@@ -467,7 +481,7 @@ impl Compositor {
     fn panel_bezel(&self) -> Option<Draw> {
         let tex = self
             .game_bezel
-            .filter(|_| crate::bezel::framed(self.window))?;
+            .filter(|_| self.game.native_video() || crate::bezel::framed(self.window))?;
         let canvas = Canvas::of(self.window);
         Some(Draw::Tex {
             x: 0.0,

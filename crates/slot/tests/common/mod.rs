@@ -435,6 +435,11 @@ impl Platform for StubPlatform {
         self.backlight.store(step, Ordering::Relaxed);
     }
 
+    fn backlight_step(&self) -> Option<u8> {
+        let step = self.backlight.load(Ordering::Relaxed);
+        (step <= 10).then_some(step)
+    }
+
     fn charge(&self) -> Charge {
         match self.charge.load(Ordering::Relaxed) {
             1 => Charge::Discharging,

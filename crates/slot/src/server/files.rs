@@ -127,11 +127,16 @@ fn serve(root: &Path, mut req: Request, t: Target) -> Reply {
         Err(r) => return refused(r),
     };
     let at_root = t.sub.is_empty() && t.base.is_empty();
+    // Platform bezel collections can be empty before their first upload.
+    let platform_bezels = t.base == ["Bezels"]
+        && slot_store::Platform::ALL
+            .iter()
+            .any(|platform| t.sub == [platform.dir_name()]);
     match req.method.as_str() {
         "GET" | "HEAD" => {
             if path.is_file() {
                 Reply::file(path)
-            } else if !path.exists() && !t.sub.is_empty() {
+            } else if !path.exists() && !t.sub.is_empty() && !platform_bezels {
                 Reply::error(404, "not found")
             } else {
                 let recursive = req.query.get("recursive").map(String::as_str) == Some("true");

@@ -1,5 +1,7 @@
 use slot_input::{anywhere, Action, Contexts, Entry};
-use slot_store::{Binding, CarouselAction, CarouselKeys, Controls, Modifier, ShortcutKeys};
+use slot_store::{
+    Binding, CarouselAction, CarouselKeys, Controls, GameButton, Modifier, Platform, ShortcutKeys,
+};
 use slot_ui::QuickRow;
 
 use super::bind::{chord, shortcut_action};
@@ -22,11 +24,15 @@ impl Table {
         shortcuts: &ShortcutKeys,
         carousel: &CarouselKeys,
         turbo: bool,
+        platform: Platform,
     ) -> Table {
         let rows = QuickRow::ALL
             .into_iter()
             .filter_map(|row| {
                 if let Some(g) = row.game_button() {
+                    if !GameButton::of(platform).contains(&g) {
+                        return None;
+                    }
                     let turbo_row = matches!(row, QuickRow::GameTurboA | QuickRow::GameTurboB);
                     if turbo_row && !turbo {
                         return None;
@@ -45,6 +51,14 @@ impl Table {
                         binding,
                         action: Some(action),
                         contexts: match (anywhere(action), binding.modifier) {
+                            (_, None)
+                                if platform == Platform::Ps
+                                    && GameButton::of(platform)
+                                        .iter()
+                                        .any(|g| controls.game(*g) == Some(binding)) =>
+                            {
+                                Contexts::SHELF
+                            }
                             (false, _) => Contexts::GAME,
                             (true, None) => Contexts::GAME.with(Contexts::SHELF),
                             (true, Some(_)) => Contexts::ALL,

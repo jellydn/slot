@@ -212,10 +212,14 @@ pub enum GameButton {
     R,
     TurboA,
     TurboB,
+    X,
+    Y,
+    L2,
+    R2,
 }
 
 impl GameButton {
-    pub const ALL: [GameButton; 12] = [
+    pub const ALL: [GameButton; 16] = [
         GameButton::Up,
         GameButton::Down,
         GameButton::Left,
@@ -228,6 +232,51 @@ impl GameButton {
         GameButton::R,
         GameButton::TurboA,
         GameButton::TurboB,
+        GameButton::X,
+        GameButton::Y,
+        GameButton::L2,
+        GameButton::R2,
+    ];
+
+    const GBA: [GameButton; 12] = [
+        GameButton::Up,
+        GameButton::Down,
+        GameButton::Left,
+        GameButton::Right,
+        GameButton::A,
+        GameButton::B,
+        GameButton::Select,
+        GameButton::Start,
+        GameButton::L,
+        GameButton::R,
+        GameButton::TurboA,
+        GameButton::TurboB,
+    ];
+
+    const PLAYSTATION: [GameButton; 14] = [
+        GameButton::Up,
+        GameButton::Down,
+        GameButton::Left,
+        GameButton::Right,
+        GameButton::A,
+        GameButton::B,
+        GameButton::X,
+        GameButton::Y,
+        GameButton::Select,
+        GameButton::Start,
+        GameButton::L,
+        GameButton::R,
+        GameButton::L2,
+        GameButton::R2,
+    ];
+
+    const PICO8: [GameButton; 6] = [
+        GameButton::Up,
+        GameButton::Down,
+        GameButton::Left,
+        GameButton::Right,
+        GameButton::A,
+        GameButton::B,
     ];
 
     const GAME_BOY: [GameButton; 10] = [
@@ -245,8 +294,10 @@ impl GameButton {
 
     pub fn of(platform: Platform) -> &'static [GameButton] {
         match platform {
-            Platform::Gba | Platform::Gbav => &GameButton::ALL,
+            Platform::Gba | Platform::Gbav => &GameButton::GBA,
             Platform::Gb | Platform::Gbc => &GameButton::GAME_BOY,
+            Platform::Ps => &GameButton::PLAYSTATION,
+            Platform::Pico8 => &GameButton::PICO8,
         }
     }
 
@@ -264,6 +315,10 @@ impl GameButton {
             GameButton::R => "R Button",
             GameButton::TurboA => "Turbo A",
             GameButton::TurboB => "Turbo B",
+            GameButton::X => "X Button",
+            GameButton::Y => "Y Button",
+            GameButton::L2 => "L2 Button",
+            GameButton::R2 => "R2 Button",
         }
     }
 
@@ -281,6 +336,10 @@ impl GameButton {
             GameButton::R => "r",
             GameButton::TurboA => "turbo_a",
             GameButton::TurboB => "turbo_b",
+            GameButton::X => "x",
+            GameButton::Y => "y",
+            GameButton::L2 => "l2",
+            GameButton::R2 => "r2",
         }
     }
 
@@ -298,6 +357,10 @@ impl GameButton {
             GameButton::R => Device::R1,
             GameButton::TurboA => Device::X,
             GameButton::TurboB => Device::Y,
+            GameButton::X => Device::X,
+            GameButton::Y => Device::Y,
+            GameButton::L2 => Device::L2,
+            GameButton::R2 => Device::R2,
         }
     }
 
@@ -431,7 +494,7 @@ impl Shortcut {
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Controls {
-    game: [Option<Binding>; 12],
+    game: [Option<Binding>; 16],
 }
 
 impl Default for Controls {

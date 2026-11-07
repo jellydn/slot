@@ -1,7 +1,15 @@
-use slot_retro::{GBA_H, GBA_W};
+use slot_retro::FrameGeometry;
 
 pub fn png(xrgb8888: &[u8]) -> Option<Vec<u8>> {
-    let n = (GBA_W * GBA_H) as usize;
+    png_frame(xrgb8888, FrameGeometry::default())
+}
+
+pub fn png_frame(xrgb8888: &[u8], geometry: FrameGeometry) -> Option<Vec<u8>> {
+    let FrameGeometry { width, height, .. } = geometry;
+    if !(1..=2048).contains(&width) || !(1..=2048).contains(&height) {
+        return None;
+    }
+    let n = (width * height) as usize;
     if xrgb8888.len() < n * 4 {
         return None;
     }
@@ -11,7 +19,7 @@ pub fn png(xrgb8888: &[u8]) -> Option<Vec<u8>> {
     }
 
     let mut out = Vec::new();
-    let mut enc = png::Encoder::new(&mut out, GBA_W, GBA_H);
+    let mut enc = png::Encoder::new(&mut out, width, height);
     enc.set_color(png::ColorType::Rgb);
     enc.set_depth(png::BitDepth::Eight);
     let mut writer = enc.write_header().ok()?;

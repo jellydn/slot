@@ -46,6 +46,40 @@ fn every_console_button_starts_on_the_device_button_of_its_name() {
 }
 
 #[test]
+fn native_buttons_use_the_existing_mapper_without_gb_turbo_or_stick_clicks() {
+    let ps = GameButton::of(Platform::Ps);
+    assert_eq!(ps.len(), 14);
+    assert!(!ps.contains(&GameButton::TurboA));
+    assert!(!ps.contains(&GameButton::TurboB));
+    let d = card();
+    let mut controls = Controls::default();
+    for (button, device) in [
+        (GameButton::X, Device::X),
+        (GameButton::Y, Device::Y),
+        (GameButton::L2, Device::L2),
+        (GameButton::R2, Device::R2),
+    ] {
+        assert!(ps.contains(&button));
+        assert_eq!(controls.game(button), plain(device));
+    }
+    controls.set_game(GameButton::X, plain(Device::Y));
+    controls.set_game(GameButton::R2, plain(Device::L2));
+    write_controls(d.path(), &controls).unwrap();
+    assert_eq!(read_controls(d.path()), controls);
+    assert_eq!(
+        GameButton::of(Platform::Pico8),
+        &[
+            GameButton::Up,
+            GameButton::Down,
+            GameButton::Left,
+            GameButton::Right,
+            GameButton::A,
+            GameButton::B
+        ]
+    );
+}
+
+#[test]
 fn the_shortcuts_start_where_they_are_today() {
     let c = ShortcutKeys::default();
     assert_eq!(

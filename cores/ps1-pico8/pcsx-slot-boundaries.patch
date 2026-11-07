@@ -1,0 +1,131 @@
+--- a/frontend/libretro.c
++++ b/frontend/libretro.c
+@@ -1244,6 +1244,8 @@
+ }
+ 
+ /* savestates */
++static bool save_failed;
++
+ size_t retro_serialize_size(void)
+ {
+    // it's currently 4380651-4397047 bytes,
+@@ -1282,6 +1284,11 @@
+    if (fp == NULL || buf == NULL)
+       return -1;
+ 
++   if (fp->pos > retro_serialize_size() || len > retro_serialize_size() - fp->pos) {
++      save_failed = true;
++      memset(buf, 0, len);
++      return -1;
++   }
+    memcpy(buf, fp->buf + fp->pos, len);
+    fp->pos += len;
+    return len;
+@@ -1293,6 +1300,10 @@
+    if (fp == NULL || buf == NULL)
+       return -1;
+ 
++   if (fp->pos > retro_serialize_size() || len > retro_serialize_size() - fp->pos) {
++      save_failed = true;
++      return -1;
++   }
+    memcpy(fp->buf + fp->pos, buf, len);
+    fp->pos += len;
+    return len;
+@@ -1301,20 +1312,28 @@
+ static long save_seek(void *file, long offs, int whence)
+ {
+    struct save_fp *fp = file;
++   long base;
+    if (fp == NULL)
+       return -1;
+ 
+    switch (whence)
+    {
+    case SEEK_CUR:
+-      fp->pos += offs;
+-      return fp->pos;
++      base = fp->pos;
++      break;
+    case SEEK_SET:
+-      fp->pos = offs;
+-      return fp->pos;
++      base = 0;
++      break;
+    default:
++      save_failed = true;
+       return -1;
+    }
++   if (offs < -base || offs > (long)retro_serialize_size() - base) {
++      save_failed = true;
++      return -1;
++   }
++   fp->pos = base + offs;
++   return fp->pos;
+ }
+ 
+ static void save_close(void *file)
+@@ -1339,12 +1358,15 @@
+ bool retro_serialize(void *data, size_t size)
+ {
+    int ret;
++   if (data == NULL || size != retro_serialize_size())
++      return false;
++   save_failed = false;
+    CdromFrontendId = disk_current_index;
+    ret = SaveState(data);
+ 
+    // old3ds tends to oom here, so log
+    log_mem_usage(1);
+-   return ret == 0 ? true : false;
++   return ret == 0 && !save_failed;
+ }
+ 
+ static bool disk_set_image_index(unsigned int index);
+@@ -1352,9 +1374,12 @@
+ bool retro_unserialize(const void *data, size_t size)
+ {
+    int ret;
++   if (data == NULL || size != retro_serialize_size())
++      return false;
++   save_failed = false;
+    CdromFrontendId = -1;
+    ret = LoadState(data);
+-   if (ret)
++   if (ret || save_failed)
+       return false;
+    if (CdromFrontendId != -1 && CdromFrontendId != disk_current_index)
+       disk_set_image_index(CdromFrontendId);
+--- a/libpcsxcore/cdriso.c
++++ b/libpcsxcore/cdriso.c
+@@ -486,20 +486,16 @@
+ 				continue;
+ 			}
+ 
+-			// absolute path?
+-			fnew = fopen(tmpb, "rb");
+-			if (fnew == NULL) {
+-				// relative to .cue?
+-				tmp = strrchr(tmpb, '\\');
+-				if (tmp == NULL)
+-					tmp = strrchr(tmpb, '/');
+-				if (tmp != NULL)
+-					tmp++;
+-				else
+-					tmp = tmpb;
+-				strncpy(incue_fname, tmp, incue_max_len);
+-				fnew = fopen(filepath, "rb");
+-			}
++			// Slot validates sibling-only tracks. Never prefer a cwd collision.
++			tmp = strrchr(tmpb, '\\');
++			if (tmp == NULL)
++				tmp = strrchr(tmpb, '/');
++			if (tmp != NULL)
++				tmp++;
++			else
++				tmp = tmpb;
++			strncpy(incue_fname, tmp, incue_max_len);
++			fnew = fopen(filepath, "rb");
+ 			if (fnew == NULL) {
+ 				SysPrintf(_("\ncould not open: %s\n"), filepath);
+ 				continue;

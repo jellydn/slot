@@ -135,6 +135,15 @@ fn opening_needs_no_network() {
 }
 
 #[test]
+fn choice_explains_native_provider_limits_before_fetching() {
+    let (_d, a, art) = choosing();
+    let lines = a.fetch_art_lines();
+    assert_eq!(lines[4], "PICO-8: local labels, no Wi-Fi needed");
+    assert_eq!(lines[5], "Online: GB/GBC/GBA. PS1: upload PNG");
+    assert!(art.asked().is_empty());
+}
+
+#[test]
 fn bundled_examples_are_two_different_labels() {
     let [real, logo] = slot::fetch_faces::example_faces();
     assert_eq!((real.w, real.h), (360, 212));

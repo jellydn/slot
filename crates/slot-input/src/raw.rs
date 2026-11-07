@@ -31,4 +31,8 @@ pub type Millis = u64;
 
 pub trait InputSource {
     fn poll(&mut self, now: Millis) -> Vec<RawEvent>;
+
+    fn analog_sticks(&self) -> [[i16; 2]; 2] {
+        [[0; 2]; 2]
+    }
 }

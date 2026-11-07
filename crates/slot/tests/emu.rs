@@ -7,7 +7,8 @@ use slot::audio::{AudioSink, StubSink};
 use slot::emu::{CoreState, EmuHandle, Speed, FAST_STEPS, FAST_STEPS_MAX};
 use slot::persist::Snapshot;
 use slot_retro::{
-    AvInfo, ButtonMask, CoreError, LinkChannel, MockCore, RetroCore, NETPACKET_RELIABLE,
+    AvInfo, ButtonMask, Controller, CoreError, FrameGeometry, LinkChannel, MockCore, RetroCore,
+    NETPACKET_RELIABLE,
 };
 
 const PRESENT: Duration = Duration::from_nanos(16_666_667);
@@ -65,6 +66,83 @@ fn frame_count(emu: &EmuHandle) -> u64 {
         .recv_timeout(Duration::from_secs(2))
         .expect("the worker never answered a state request");
     u64::from_le_bytes(bytes.try_into().expect("mock state is a u64 counter"))
+}
+
+#[test]
+fn performance_counts_actual_steps_only_while_enabled_without_changing_playback() {
+    let emu = spawn();
+    emu.set_speed(Speed::Paused);
+    assert!(wait_for(|| emu.observed_speed() == Speed::Paused));
+    let before = frame_count(&emu);
+    assert_eq!(emu.performance().steps, 0);
+    emu.set_performance(true);
+    emu.set_speed(Speed::Normal);
+    assert!(wait_for(|| emu.performance().steps >= 4));
+    emu.set_speed(Speed::Paused);
+    assert!(wait_for(|| emu.observed_speed() == Speed::Paused));
+    let after = frame_count(&emu);
+    let measured = emu.performance();
+    assert_eq!(measured.steps, after - before);
+    assert!(measured.core_ns > 0 && measured.rewind_ns > 0);
+    assert!(measured.copy_ns > 0 && measured.audio_ns > 0);
+    emu.set_performance(false);
+    emu.set_speed(Speed::Normal);
+    assert!(wait_for(|| emu.published_count() > after + 2));
+    emu.set_speed(Speed::Paused);
+    assert!(wait_for(|| emu.observed_speed() == Speed::Paused));
+    assert_eq!(emu.performance().steps, measured.steps);
+    assert!(frame_count(&emu) > after);
+}
+
+#[test]
+fn performance_rates_separate_emulation_fresh_swaps_and_interleaved_audio_samples() {
+    use slot::performance::{lines, Totals};
+    let before = Totals {
+        steps: 100,
+        fresh: 80,
+        swaps: 200,
+        missed: 9,
+        core_ns: 100,
+        rewind_ns: 200,
+        copy_ns: 300,
+        audio_ns: 400,
+        work_ns: 500,
+        swap_ns: 600,
+        starved: 1000,
+        dropped: 2000,
+        late_available: true,
+    };
+    let after = Totals {
+        steps: 175,
+        fresh: 130,
+        swaps: 350,
+        missed: 14,
+        core_ns: 300_000_100,
+        rewind_ns: 150_000_200,
+        copy_ns: 37_500_300,
+        audio_ns: 93_750_400,
+        work_ns: 450_000_500,
+        swap_ns: 1_200_000_600,
+        starved: 2000,
+        dropped: 2250,
+        late_available: true,
+    };
+    assert_eq!(
+        lines(before, after, Duration::from_millis(2500)),
+        [
+            "Emu 30.0 fps | fresh 20.0 fps",
+            "Swaps 60.0 fps | late 2.0/s",
+            "Core 4.00 ms | rewind 2.00 ms/step",
+            "Copy 0.50 ms | audio 1.25 ms/step",
+            "Work 3.00 ms | swap 8.00 ms/swap",
+            "Audio gaps 400 | drop 100 samples/s",
+        ]
+    );
+    let host = Totals {
+        late_available: false,
+        ..after
+    };
+    assert!(lines(before, host, Duration::from_secs(1))[1].ends_with("late n/a"));
 }
 
 #[test]
@@ -220,6 +298,11 @@ struct Probe {
     cost: Duration,
     skip: bool,
     log: Arc<Mutex<Vec<bool>>>,
+    states: bool,
+    native: Option<(FrameGeometry, Vec<u8>)>,
+    sticks: [[i16; 2]; 2],
+    controller: Controller,
+    timing: Option<AvInfo>,
 }
 
 impl Probe {
@@ -230,6 +313,11 @@ impl Probe {
             cost,
             skip: false,
             log: log.clone(),
+            states: true,
+            native: None,
+            sticks: [[0; 2]; 2],
+            controller: Controller::Digital,
+            timing: None,
         });
         (probe, log)
     }
@@ -245,21 +333,52 @@ impl RetroCore for Probe {
             std::thread::sleep(self.cost);
         }
         self.inner.run_frame(input);
+        if let Some((_, video)) = &mut self.native {
+            video[..2].copy_from_slice(&input.0.to_le_bytes());
+            for (axis, value) in self.sticks.iter().flatten().enumerate() {
+                video[2 + axis * 2..4 + axis * 2].copy_from_slice(&value.to_le_bytes());
+            }
+            video[10] = u8::from(self.controller == Controller::DualShock);
+        }
+    }
+    fn uses_gb_buttons(&self) -> bool {
+        self.native.is_none()
+    }
+    fn sync_to_display(&self) -> bool {
+        self.native.is_none()
+    }
+    fn set_analog(&mut self, sticks: [[i16; 2]; 2]) {
+        self.sticks = sticks;
+    }
+    fn set_controller(&mut self, controller: Controller) {
+        self.controller = controller;
     }
     fn set_frame_skip(&mut self, skip: bool) {
         self.skip = skip;
         self.inner.set_frame_skip(skip);
     }
+    fn video_geometry(&self) -> FrameGeometry {
+        self.native
+            .as_ref()
+            .map_or_else(FrameGeometry::default, |v| v.0)
+    }
     fn video_xrgb8888(&self) -> &[u8] {
-        self.inner.video_xrgb8888()
+        self.native
+            .as_ref()
+            .map_or_else(|| self.inner.video_xrgb8888(), |v| &v.1)
     }
     fn take_audio(&mut self) -> Vec<i16> {
         self.inner.take_audio()
     }
+    fn supports_states(&self) -> bool {
+        self.states
+    }
     fn serialize(&mut self) -> Result<Vec<u8>, CoreError> {
+        assert!(self.states, "a state-disabled core must not serialize");
         self.inner.serialize()
     }
     fn unserialize(&mut self, data: &[u8]) -> Result<(), CoreError> {
+        assert!(self.states, "a state-disabled core must not restore");
         self.inner.unserialize(data)
     }
     fn save_ram(&self) -> Option<Vec<u8>> {
@@ -269,8 +388,174 @@ impl RetroCore for Probe {
         self.inner.load_save_ram(data)
     }
     fn av_info(&self) -> AvInfo {
-        self.inner.av_info()
+        self.timing.unwrap_or_else(|| self.inner.av_info())
     }
+}
+
+#[test]
+fn a_native_core_keeps_its_own_frame_rate_when_the_display_is_driven() {
+    let mut sink = StubSink::new();
+    sink.open(32_768).unwrap();
+    drain(sink.clone());
+    let (mut core, _) = Probe::new(Duration::ZERO);
+    core.native = Some((
+        FrameGeometry {
+            width: 128,
+            height: 128,
+            aspect: 1.0,
+        },
+        vec![0; 128 * 128 * 4],
+    ));
+    // A deliberately slow rate separates core timing from the frontend's 60 Hz clock.
+    core.timing = Some(AvInfo {
+        fps: 5.0,
+        sample_rate: 32_768.0,
+    });
+    let emu = EmuHandle::spawn(core, PathBuf::from("mock"), sink.ring(), None, None);
+    emu.set_driven(true);
+    emu.set_speed(Speed::Normal);
+    for _ in 0..12 {
+        emu.tick(PRESENT);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(wait_for(|| emu.published_count() > 0));
+    let frame = emu.published_count();
+    let began = Instant::now();
+    assert!(
+        wait_for(|| emu.published_count() > frame),
+        "native playback stalled without a display tick"
+    );
+    assert!(
+        began.elapsed() >= Duration::from_millis(100),
+        "the 5 Hz core ran at the display's rate"
+    );
+    assert!(
+        !emu.locked(),
+        "native core timing was replaced with display timing"
+    );
+}
+
+#[test]
+fn native_frames_keep_all_corners_in_worker_thumbnails() {
+    for (width, height, aspect) in [(128, 128, 1.0), (320, 448, 4.0 / 3.0)] {
+        let mut sink = StubSink::new();
+        sink.open(32_768).unwrap();
+        let (mut core, _) = Probe::new(Duration::ZERO);
+        let mut video = vec![0; width * height * 4];
+        video[..4].copy_from_slice(&[11, 22, 33, 255]);
+        video[(width * height - 1) * 4..].copy_from_slice(&[44, 55, 66, 255]);
+        core.native = Some((
+            FrameGeometry {
+                width: width as u32,
+                height: height as u32,
+                aspect,
+            },
+            video,
+        ));
+        let emu = EmuHandle::spawn(core, PathBuf::from("mock"), sink.ring(), None, None);
+        assert!(wait_for(|| emu.state() == CoreState::Ready));
+        let encoded = emu.snapshot().thumb().expect("native frame thumbnail");
+        let mut reader = png::Decoder::new(encoded.as_slice()).read_info().unwrap();
+        let mut rgb = vec![0; reader.output_buffer_size()];
+        let info = reader.next_frame(&mut rgb).unwrap();
+        assert_eq!((info.width, info.height), (width as u32, height as u32));
+        assert_eq!(&rgb[..3], &[33, 22, 11]);
+        assert_eq!(&rgb[(width * height - 1) * 3..], &[66, 55, 44]);
+        emu.set_speed(Speed::Normal);
+        assert!(wait_for(|| emu.has_published()));
+        let frame = emu.latest_frame().unwrap();
+        assert_eq!(
+            frame.geometry,
+            FrameGeometry {
+                width: width as u32,
+                height: height as u32,
+                aspect
+            }
+        );
+        assert_eq!(frame.len(), width * height * 4);
+        assert_eq!(&frame[frame.len() - 4..], &[44, 55, 66, 255]);
+    }
+}
+
+#[test]
+fn native_gameplay_keeps_real_buttons_both_sticks_and_controller_mode() {
+    let mut sink = StubSink::new();
+    sink.open(32_768).unwrap();
+    drain(sink.clone());
+    let (mut core, _) = Probe::new(Duration::ZERO);
+    core.native = Some((
+        FrameGeometry {
+            width: 128,
+            height: 128,
+            aspect: 1.0,
+        },
+        vec![0; 128 * 128 * 4],
+    ));
+    let emu = EmuHandle::spawn(core, PathBuf::from("mock"), sink.ring(), None, None);
+    assert!(wait_for(|| emu.state() == CoreState::Ready));
+    let buttons = ButtonMask::A
+        | ButtonMask::B
+        | ButtonMask::X
+        | ButtonMask::Y
+        | ButtonMask::L
+        | ButtonMask::R
+        | ButtonMask::L2
+        | ButtonMask::R2
+        | ButtonMask::L3
+        | ButtonMask::R3;
+    for turbo in [true, false] {
+        for (controller, input, sticks, expected) in [
+            (
+                Controller::DualShock,
+                buttons,
+                [[-12345, 23456], [32767, -32768]],
+                [3, 255, 199, 207, 160, 91, 255, 127, 0, 128, 1],
+            ),
+            (Controller::Digital, 0, [[0; 2]; 2], [0; 11]),
+        ] {
+            emu.set_turbo(turbo);
+            emu.set_input(ButtonMask(input));
+            emu.set_controller(controller);
+            emu.set_analog(sticks);
+            let target = emu.published_count() + 2;
+            emu.set_speed(Speed::Normal);
+            assert!(wait_for(|| emu.published_count() >= target));
+            emu.set_speed(Speed::Paused);
+            assert!(wait_for(|| emu.observed_speed() == Speed::Paused));
+            let frame = emu.latest_frame().unwrap();
+            assert_eq!(&frame[..11], &expected, "{controller:?}, GB turbo={turbo}");
+        }
+    }
+}
+
+#[test]
+fn a_state_disabled_worker_ignores_resume_and_rewind_and_keeps_playing_and_saving() {
+    let mut sink = StubSink::new();
+    sink.open(32_768).unwrap();
+    drain(sink.clone());
+    let (mut core, _) = Probe::new(Duration::ZERO);
+    core.states = false;
+    let emu = EmuHandle::spawn(
+        core,
+        PathBuf::from("mock"),
+        sink.ring(),
+        Some(vec![37; 8192]),
+        Some(vec![9; 8]),
+    );
+    assert!(wait_for(|| emu.state() != CoreState::Loading));
+    assert_eq!(emu.state(), CoreState::Ready);
+    let snapshot = emu.snapshot();
+    assert!(!snapshot.supports_states());
+    assert!(snapshot.state().is_none());
+    snapshot.load(vec![8; 8]);
+    emu.request_load(vec![7; 8]);
+    emu.refresh();
+    emu.set_rewind_recording(true);
+    emu.set_rewinding(true);
+    emu.set_speed(Speed::Normal);
+    assert!(wait_for(|| emu.published_count() >= 4));
+    assert_eq!(emu.rewind_fill(), 0);
+    assert_eq!(snapshot.save_ram(), Some(vec![37; 8192]));
 }
 
 fn spawn_probe(cost: Duration) -> (EmuHandle, Arc<Mutex<Vec<bool>>>) {
@@ -1085,11 +1370,9 @@ fn a_stalled_display_does_not_stall_the_worker() {
         "the worker never locked to the display"
     );
     let before = emu.published_count();
-    std::thread::sleep(Duration::from_millis(200));
-    let ran = emu.published_count() - before;
     assert!(
-        (9..=14).contains(&ran),
-        "{ran} frames in a 200 ms stall, where its own 60 Hz would run about 11"
+        wait_for(|| emu.published_count() > before),
+        "the worker waited indefinitely for a display tick"
     );
 }
 

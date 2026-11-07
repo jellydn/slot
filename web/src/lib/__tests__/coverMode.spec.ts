@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { cartAspect, MIN_PAGE_SIZE, pageSizeFor } from '../coverMode'
 
 describe('cart shape', () => {
+  it('uses a square sleeve for PS and a portrait virtual card for PICO8', () => {
+    expect(cartAspect('PS')).toBe(1)
+    expect(cartAspect('PICO8')).toBeCloseTo(160 / 205, 6)
+  })
+
   it('is 360 by 212 for the GBA folders', () => {
     expect(cartAspect('GBA')).toBeCloseTo(360 / 212, 6)
     expect(cartAspect('GBAV')).toBeCloseTo(360 / 212, 6)

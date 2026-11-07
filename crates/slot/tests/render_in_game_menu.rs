@@ -62,6 +62,105 @@ fn bright(p: [u8; 3]) -> u32 {
 }
 
 #[test]
+fn performance_hud_can_be_enabled_sampled_and_disabled_from_gameplay() {
+    let surface = HeadlessSurface::new().expect("performance HUD needs OpenGL");
+    let mut c = Compositor::new(&surface).unwrap();
+    let d = tmp_root_with_carts(&["Emerald", "Fusion"]);
+    clocked(d.path());
+    let mut f = Frontend::boot_with(
+        Box::new(SimPlatform::at(d.path().to_path_buf())),
+        Box::new(slot::audio::StubSink::new()),
+    );
+    f.upload_faces(&mut c);
+    let mut input = Script(VecDeque::new());
+    tap(&mut f, &mut input, Btn::A);
+    run_for(&mut f, &mut input, 4.0);
+    assert!(matches!(f.app().phase(), slot::app::Phase::Playing { .. }));
+    tap(&mut f, &mut input, Btn::Menu);
+    run_for(&mut f, &mut input, 0.4);
+    for row in [
+        QuickRow::Settings,
+        QuickRow::PlayGameplay,
+        QuickRow::Performance,
+    ] {
+        for _ in 0..12 {
+            if f.app().in_game_menu() == Some(row) {
+                break;
+            }
+            tap(&mut f, &mut input, Btn::Down);
+        }
+        assert_eq!(f.app().in_game_menu(), Some(row));
+        if row != QuickRow::Performance {
+            tap(&mut f, &mut input, Btn::A);
+        }
+    }
+    tap(&mut f, &mut input, Btn::Right);
+    assert!(f.app().performance());
+    run_for(&mut f, &mut input, 0.2);
+    composed(&mut f, &mut c, "performance-menu");
+    tap(&mut f, &mut input, Btn::Menu);
+    run_for(&mut f, &mut input, 0.4);
+    let until = Instant::now() + Duration::from_millis(1250);
+    while Instant::now() < until {
+        f.advance(&mut input);
+        f.render(&mut c, (1280, 720));
+        f.presented(Duration::from_millis(3), Duration::from_millis(2), None);
+        std::thread::sleep(Duration::from_millis(16));
+    }
+    for (w, h) in [(1280, 720), (640, 480)] {
+        f.render(&mut c, (w, h));
+        let pixels = c.read_frame();
+        let (fw, fh) = c.frame_size();
+        // Count text only inside the panel, not unrelated bright gameplay pixels.
+        let lit = (8..136.min(fh))
+            .flat_map(|y| (8..600.min(fw)).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                let at = ((y * fw + x) * 4) as usize;
+                pixels[at..at + 3].iter().all(|c| *c > 180)
+            })
+            .count();
+        assert!(lit > 100, "HUD text missing");
+        if let Ok(dir) = std::env::var("SCRATCH_PNG_DIR") {
+            let file = std::fs::File::create(format!("{dir}/performance-hud-{w}.png")).unwrap();
+            let mut encoder = png::Encoder::new(file, fw, fh);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder
+                .write_header()
+                .unwrap()
+                .write_image_data(&pixels)
+                .unwrap();
+        }
+    }
+    tap(&mut f, &mut input, Btn::Menu);
+    assert_eq!(f.app().in_game_menu(), Some(QuickRow::Resume));
+    // Opening the menu suspends measurement without changing the user's toggle.
+    assert!(f.app().performance());
+    for row in [
+        QuickRow::Settings,
+        QuickRow::PlayGameplay,
+        QuickRow::Performance,
+    ] {
+        for _ in 0..12 {
+            if f.app().in_game_menu() == Some(row) {
+                break;
+            }
+            tap(&mut f, &mut input, Btn::Down);
+        }
+        assert_eq!(f.app().in_game_menu(), Some(row));
+        if row != QuickRow::Performance {
+            tap(&mut f, &mut input, Btn::A);
+        }
+    }
+    tap(&mut f, &mut input, Btn::Left);
+    assert!(!f.app().performance());
+    tap(&mut f, &mut input, Btn::Menu);
+    run_for(&mut f, &mut input, 0.4);
+    f.render(&mut c, (720, 480));
+    composed(&mut f, &mut c, "performance-off");
+}
+
+#[test]
 fn the_in_game_menu_darkens_the_game_and_screen_leaves_it_bare() {
     let Ok(surface) = HeadlessSurface::new() else {
         return;

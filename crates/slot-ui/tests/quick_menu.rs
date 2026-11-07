@@ -160,7 +160,9 @@ fn the_rows_run_in_the_order_the_user_chose() {
             "Rumble",
             "Left Stick as D-Pad",
             "Load State on Insert",
-            "Save State on Eject"
+            "Save State on Eject",
+            "PS1 Controller",
+            "Disc"
         ]
     );
     let opens: Vec<QuickRow> = QuickRow::ALL.into_iter().filter(|r| r.opens()).collect();
@@ -300,6 +302,8 @@ fn the_values_read_as_the_menu_prints_them() {
             "HTTPS",
             "HTTP",
             "Unavailable",
+            "Digital",
+            "DualShock",
         ]
     );
     assert_eq!(QuickValue::flag(true), QuickValue::On);
@@ -396,8 +400,22 @@ fn the_in_game_pages_hold_their_rows_in_order() {
     assert_eq!(
         QuickRow::CONTROLS.map(QuickRow::label),
         [
-            "Up", "Down", "Left", "Right", "A Button", "B Button", "Select", "Start", "L Button",
-            "R Button", "Turbo A", "Turbo B"
+            "Up",
+            "Down",
+            "Left",
+            "Right",
+            "A Button",
+            "B Button",
+            "Select",
+            "Start",
+            "L Button",
+            "R Button",
+            "Turbo A",
+            "Turbo B",
+            "X Button",
+            "Y Button",
+            "L2 Button",
+            "R2 Button"
         ]
     );
     assert_eq!(

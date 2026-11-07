@@ -20,9 +20,11 @@ const { t } = useI18n()
 const displayName = computed(() => platformName(props.tag))
 
 const hasVideo = computed(() => props.tag === VIDEO_HOME)
+const native = computed(() => props.tag === 'PS' || props.tag === 'PICO8')
 
 const activeTab = computed<TabKey>(() => {
-  if (props.tab === 'bezels' || props.tab === 'bios') return props.tab
+  if (props.tab === 'bezels') return props.tab
+  if (props.tab === 'bios' && !native.value) return props.tab
   return props.tab === 'video' && hasVideo.value ? 'video' : 'games'
 })
 
@@ -37,7 +39,7 @@ const tabs = computed(() => [
   { key: 'games' as TabKey, label: t('platform.tabGames') },
   ...(hasVideo.value ? [{ key: 'video' as TabKey, label: t('platform.tabVideo') }] : []),
   { key: 'bezels' as TabKey, label: t('platform.tabBezels') },
-  { key: 'bios' as TabKey, label: t('platform.tabBios') },
+  ...(!native.value ? [{ key: 'bios' as TabKey, label: t('platform.tabBios') }] : []),
 ])
 
 function selectTab(tab: TabKey) {
@@ -86,6 +88,9 @@ const actionItems = computed<DropdownItem[]>(() => {
     </div>
 
     <div>
+      <p v-if="native && activeTab === 'bezels'" class="mb-4 text-sm text-muted-foreground">
+        {{ $t('platform.nativeBezels') }}
+      </p>
       <BiosSlot v-if="activeTab === 'bios'" :key="props.tag" :tag="props.tag" />
       <GamesTab v-else-if="activeTab !== 'bezels'" :key="gamesTag" ref="gamesTabRef" :tag="gamesTag" />
       <ResourceTab

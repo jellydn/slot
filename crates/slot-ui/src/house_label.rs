@@ -16,7 +16,7 @@ pub const GB_H: u32 = 901;
 
 pub fn size(platform: Platform) -> (u32, u32) {
     match platform {
-        Platform::Gba | Platform::Gbav => (W, H),
+        Platform::Gba | Platform::Gbav | Platform::Ps | Platform::Pico8 => (W, H),
         Platform::Gb | Platform::Gbc => (GB_W, GB_H),
     }
 }

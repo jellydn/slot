@@ -2,6 +2,8 @@ const GBA_CART = 360 / 212
 const GB_CART = 312 / 337
 
 export function cartAspect(tag: string): number {
+  if (tag === 'PS') return 1
+  if (tag === 'PICO8') return 160 / 205
   return tag === 'GB' || tag === 'GBC' ? GB_CART : GBA_CART
 }
 

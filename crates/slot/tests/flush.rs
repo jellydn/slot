@@ -239,6 +239,130 @@ struct SavingSnapshot {
     sav: Arc<std::sync::Mutex<Vec<u8>>>,
 }
 
+struct CartDataOnly;
+
+impl Snapshot for CartDataOnly {
+    fn supports_states(&self) -> bool {
+        false
+    }
+
+    fn state(&self) -> Option<Vec<u8>> {
+        panic!("a cart-data-only session must not request a state")
+    }
+
+    fn load(&self, _: Vec<u8>) {
+        panic!("a cart-data-only session must not restore a state")
+    }
+
+    fn save_ram(&self) -> Option<Vec<u8>> {
+        Some(vec![17, 42, 91])
+    }
+
+    fn thumb(&self) -> Option<Vec<u8>> {
+        None
+    }
+}
+
+#[test]
+fn cart_data_only_sessions_disable_states_and_rewind_but_keep_in_game_saves() {
+    let d = tmp_root_with_carts(&["Emerald"]);
+    let mut a = app_playing_with(d.path(), "Emerald", Box::new(CartDataOnly));
+    assert!(!a.may_load_state());
+    assert!(!a.may_rewind());
+    assert!(!a.records_rewind());
+    for row in [
+        slot_ui::QuickRow::AutoLoad,
+        slot_ui::QuickRow::EjectSave,
+        slot_ui::QuickRow::Rewind,
+    ] {
+        assert_eq!(a.quick_value(row), Some(slot_ui::QuickValue::Unavailable));
+    }
+    a.apply(Action::SaveState);
+    a.tick_ms(300_000);
+    a.settle_saves();
+    assert_eq!(
+        persist::read_sav(d.path(), Platform::Gba, "Emerald").unwrap(),
+        Some(vec![17, 42, 91])
+    );
+    a.flush_resume();
+    a.apply(Action::Eject);
+    a.settle_saves();
+    assert!(
+        StateRing::new(d.path(), Platform::Gba, Core::Mgba, "Emerald")
+            .read_resume()
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn cart_data_only_menu_marks_state_features_unavailable_without_changing_preferences() {
+    use slot::frontend::Frontend;
+    use slot_gfx::{Compositor, HeadlessSurface};
+    use slot_input::Btn;
+    use slot_power::SimPlatform;
+    use slot_ui::QuickRow;
+
+    let surface = HeadlessSurface::new().expect("headless display");
+    let mut compositor = Compositor::new(&surface).expect("compositor");
+    let d = tmp_root_with_carts(&["Emerald", "Fusion"]);
+    common::clocked(d.path());
+    let mut f = Frontend::boot(Box::new(SimPlatform::at(d.path().to_path_buf())));
+    f.upload_faces(&mut compositor);
+    for _ in 0..4 {
+        let now = f.app().now();
+        f.app_mut().tick_ms(now + 1_000);
+    }
+    f.app_mut().set_snapshot(Box::new(CartDataOnly));
+    f.app_mut().set_panel((640, 480));
+    compositor.fit((640, 480));
+    f.app_mut().apply(Action::QuickMenu);
+    let tap = |f: &mut Frontend, button| {
+        f.app_mut().apply(Action::GbaDown(button));
+        f.app_mut().apply(Action::GbaUp(button));
+    };
+    for _ in 0..QuickRow::Game.position(&f.app().hidden_rows()) {
+        tap(&mut f, Btn::Down);
+    }
+    assert_eq!(f.app().quick_menu(), Some(QuickRow::Game));
+    tap(&mut f, Btn::A);
+    for row in [QuickRow::Rewind, QuickRow::AutoLoad, QuickRow::EjectSave] {
+        for _ in 0..20 {
+            if f.app().quick_menu() == Some(row) {
+                break;
+            }
+            tap(&mut f, Btn::Down);
+        }
+        assert_eq!(f.app().quick_menu(), Some(row));
+        assert_eq!(
+            f.app().quick_value(row),
+            Some(slot_ui::QuickValue::Unavailable)
+        );
+        let prior = read_slot_state(d.path());
+        tap(&mut f, Btn::Right);
+        let after = read_slot_state(d.path());
+        assert_eq!(
+            (prior.auto_load, prior.eject_save, prior.rewind),
+            (after.auto_load, after.eject_save, after.rewind)
+        );
+    }
+    f.compose(&mut compositor);
+    f.compose(&mut compositor);
+    assert_eq!(compositor.frame_size(), (640, 480));
+    if let Ok(dir) = std::env::var("SCRATCH_PNG_DIR") {
+        let file = std::fs::File::create(format!("{dir}/cartdata-only-settings-640.png")).unwrap();
+        let mut encoder = png::Encoder::new(file, 640, 480);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder
+            .write_header()
+            .unwrap()
+            .write_image_data(&compositor.read_frame())
+            .unwrap();
+    }
+}
+
 impl Snapshot for SavingSnapshot {
     fn state(&self) -> Option<Vec<u8>> {
         Some(vec![3u8; 64])
@@ -523,4 +647,49 @@ fn truncated_compressed_save_is_an_error_not_a_blank_game() {
     let whole = rzip(&raw);
     place_sav(d.path(), &whole[..whole.len() - 4]);
     assert!(persist::read_sav(d.path(), Platform::Gba, "Emerald").is_err());
+}
+
+#[test]
+fn native_saves_are_isolated_by_platform_core_and_complete_content_name() {
+    let d = tempfile::tempdir().unwrap();
+    for (platform, name, bytes) in [
+        (Platform::Ps, "Same.chd", vec![1, 7]),
+        (Platform::Ps, "Same.pbp", vec![2, 8, 9]),
+        (Platform::Pico8, "Same.p8", vec![3, 11]),
+        (Platform::Pico8, "Same.p8.png", vec![4, 12]),
+        (Platform::Gba, "Same", vec![5, 13]),
+    ] {
+        persist::write_sav(d.path(), platform, name, &bytes).unwrap();
+        assert_eq!(
+            persist::read_sav(d.path(), platform, name).unwrap(),
+            Some(bytes)
+        );
+    }
+    assert_eq!(
+        persist::read_sav(d.path(), Platform::Ps, "Same.chd").unwrap(),
+        Some(vec![1, 7])
+    );
+    assert_eq!(
+        persist::read_sav(d.path(), Platform::Pico8, "Same.p8").unwrap(),
+        Some(vec![3, 11])
+    );
+    assert_eq!(
+        std::fs::read(d.path().join("Saves/GBA/Same.sav")).unwrap(),
+        [5, 13]
+    );
+    assert!(persist::core_save_dir(d.path(), Platform::Ps, "Same.chd")
+        .starts_with(d.path().join("Saves/PS/pcsx_rearmed")));
+    assert!(persist::core_save_dir(d.path(), Platform::Pico8, "Same.p8")
+        .starts_with(d.path().join("Saves/PICO8/fake08")));
+    let ring = StateRing::new(d.path(), Platform::Pico8, Core::Fake08, "Same.p8");
+    ring.write_resume(&[99, 98]).unwrap();
+    assert_eq!(
+        persist::read_resume(d.path(), Platform::Pico8, Core::Fake08, "Same.p8").unwrap(),
+        Some(vec![99, 98])
+    );
+    assert_eq!(
+        ring.read_resume().unwrap(),
+        Some(vec![99, 98]),
+        "reading a state leaves validation to the core without deleting it"
+    );
 }

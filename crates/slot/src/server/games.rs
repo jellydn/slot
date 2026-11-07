@@ -253,6 +253,25 @@ pub fn games(root: &Path, mut req: Request) -> Reply {
             if method != "POST" {
                 return Reply::error(405, "method not allowed");
             }
+            if cart.platform == Platform::Pico8 {
+                use crate::art::pico8::LabelError;
+                return match crate::art::jobs::fetch_local_label(root, cart) {
+                    Ok(()) => ok(),
+                    Err(LabelError::Missing) => {
+                        Reply::error(404, "cartridge has no embedded label")
+                    }
+                    Err(LabelError::Malformed) => Reply::error(422, "malformed cartridge label"),
+                    Err(LabelError::Unsupported) => {
+                        Reply::error(422, "unsupported cartridge image")
+                    }
+                    Err(LabelError::TooLarge) => {
+                        Reply::error(422, "cartridge exceeds label reader limit")
+                    }
+                    Err(LabelError::Read | LabelError::Write) => {
+                        Reply::error(500, "local label file unavailable")
+                    }
+                };
+            }
             match crate::art::jobs::fetch_label(root, cart) {
                 Ok(true) => ok(),
                 Ok(false) => Reply::error(404, "no label found"),

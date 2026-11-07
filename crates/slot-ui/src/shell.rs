@@ -83,6 +83,7 @@ pub fn shell_for(cart: &Cart) -> Shell {
     match cart.platform {
         Platform::Gba | Platform::Gbav => gba_shell_for(&gba_code(cart)),
         Platform::Gb | Platform::Gbc => gb_shell_for(&cart.rom),
+        Platform::Ps | Platform::Pico8 => gba_shell_for(""),
     }
 }
 
@@ -97,6 +98,7 @@ pub fn indexed_shell(cart: &Cart) -> Option<Shell> {
         },
         Platform::Gb | Platform::Gbc => slot_store::header_index::peek_gb_header(&cart.rom)
             .map(|h| gb_shell_from(h.as_ref(), &cart.rom)),
+        Platform::Ps | Platform::Pico8 => Some(gba_shell_for("")),
     }
 }
 

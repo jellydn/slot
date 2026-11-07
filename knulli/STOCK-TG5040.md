@@ -653,3 +653,33 @@ Those takeover behaviors are not adopted. No internal startup modification,
 service kill/restart, background Slot or new OS image is proposed by this package.
 If SD frontend ownership is not approved, normal Apps launch with the guarded
 stock-menu boot is the supported route. Direct Slot boot is NOT solved.
+
+## Brightness follow-up — scoped owner feedback, not full acceptance
+
+This change was included in the approved test.4 and later test.9 SD updates.
+The owner reported brightness working after test.4. The host-verification
+notes below describe the original evidence, not a new device action or full
+OSD/suspend acceptance. Startup volume and decorative LEDs remain unresolved.
+
+The owner confirmed Slot brightness works on Knulli. Its captured first-run
+log selected `dispdbg`; the stock backend's previous refusal was an unimplemented
+capability, not evidence that stock firmware cannot change brightness.
+
+The follow-up opens `/dev/disp` without changing brightness. The TG5040 MinUI
+reference uses LCD screen 0, four native unsigned-long arguments and SET ioctl
+`0x102` with a raw 0–255 value. The sunxi disp2
+[header](https://github.com/allwinner-zh/linux-3.4-sunxi/blob/master/include/video/sunxi_display2.h)
+and [handler](https://github.com/allwinner-zh/linux-3.4-sunxi/blob/master/drivers/video/sunxi/disp2/disp/dev_disp.c)
+define GET `0x103`, whose return value is brightness, not an output-buffer field.
+These are source references, not a matched live-kernel acceptance test.
+
+Slot reads the current level before each explicit adjustment and displays
+readback, not its saved preference. Ten hardware steps reuse the existing
+nonstock curve; user adjustments cannot select the backlight-off step. Startup
+does not replay saved brightness, dim preferences are not applied, and there is
+no polling writer, automatic restoration, scene helper or service takeover.
+Volume remains firmware-owned. Knulli/nonstock control behavior is unchanged.
+Failed open/readback shows Unavailable; a failed write cannot advance the
+displayed level without hardware readback. Stock OSD/persistence, physical
+brightness, shortcuts and suspend/wake still require an approved handheld test.
+No device display write or SD update was performed during host verification.

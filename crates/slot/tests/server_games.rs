@@ -62,7 +62,47 @@ fn library(root: &Path) {
 }
 
 #[test]
-fn tags_are_the_four_platforms() {
+fn local_pico_fetch_reports_missing_invalid_and_preserves_custom_labels() {
+    let (d, server) = start();
+    let path = "Games/PICO8/Local.p8";
+    let header = "pico-8 cartridge // http://www.pico-8.com\nversion 42\n__lua__\n";
+    put(d.path(), path, header.as_bytes());
+    let url = "/api/games/PICO8/0/fetch-label";
+    let (status, body) = call(server.port(), "POST", url, b"");
+    assert_eq!(status, 404, "{body}");
+    assert!(body.contains("no embedded label"));
+    put(d.path(), path, format!("{header}__label__\n0\n").as_bytes());
+    let (status, body) = call(server.port(), "POST", url, b"");
+    assert_eq!(status, 422, "{body}");
+    assert!(body.contains("malformed"));
+    put(
+        d.path(),
+        path,
+        format!(
+            "{header}__label__\n{}",
+            ("c".repeat(128) + "\n").repeat(128)
+        )
+        .as_bytes(),
+    );
+    assert_eq!(call(server.port(), "POST", url, b"").0, 200);
+    let label = d.path().join("Labels/PICO8/Local.p8.png");
+    assert!(
+        png::Decoder::new(std::io::Cursor::new(std::fs::read(&label).unwrap()))
+            .read_info()
+            .is_ok()
+    );
+    put(
+        d.path(),
+        "Labels/PICO8/Local.p8.png",
+        b"owner's custom label",
+    );
+    assert_eq!(call(server.port(), "POST", url, b"").0, 200);
+    assert_eq!(std::fs::read(label).unwrap(), b"owner's custom label");
+    assert!(!d.path().join("Cache/art/index.json").exists());
+}
+
+#[test]
+fn tags_include_the_native_platforms() {
     let (_d, server) = start();
     let (status, body) = call(server.port(), "GET", "/api/tags", b"");
     assert_eq!(status, 200, "{body}");
@@ -74,7 +114,7 @@ fn tags_are_the_four_platforms() {
         .map(|t| t.as_str().unwrap().to_string())
         .collect();
     tags.sort();
-    assert_eq!(tags, ["GB", "GBA", "GBAV", "GBC"]);
+    assert_eq!(tags, ["GB", "GBA", "GBAV", "GBC", "PICO8", "PS"]);
     server.stop();
 }
 
@@ -533,6 +573,38 @@ fn art_upload_caches_the_label_for_the_shelf() {
     server.stop();
 }
 
+#[test]
+fn native_game_art_uses_the_complete_content_identity_and_separate_folders() {
+    let (d, server) = start();
+    for (tag, name) in [("PS", "Game.chd"), ("PICO8", "Game.p8.png")] {
+        put(d.path(), &format!("Games/{tag}/{name}"), b"fixture");
+        let art = solid_png(32, 24, [71, 113, 29]);
+        let endpoint = format!("/api/games/{tag}/0/art");
+        let (status, _) = call(
+            server.port(),
+            "POST",
+            &format!("{endpoint}?name=authored.png"),
+            &art,
+        );
+        assert_eq!(status, 200);
+        assert_eq!(
+            std::fs::read(d.path().join(format!("Labels/{tag}/{name}.png"))).unwrap(),
+            art
+        );
+        assert!(d
+            .path()
+            .join(format!("Cache/Labels/{tag}/{name}.lz4"))
+            .exists());
+        let (status, body) = call(server.port(), "GET", &format!("/api/games/{tag}"), b"");
+        assert_eq!(status, 200);
+        assert_eq!(json(&body)["games"][0]["hasArt"], true);
+        let (status, _) = call(server.port(), "DELETE", &endpoint, b"");
+        assert_eq!(status, 200);
+        assert!(!d.path().join(format!("Labels/{tag}/{name}.png")).exists());
+    }
+    server.stop();
+}
+
 fn solid_png(w: u32, h: u32, rgb: [u8; 3]) -> Vec<u8> {
     let mut out = Vec::new();
     let mut enc = png::Encoder::new(&mut out, w, h);
@@ -549,7 +621,11 @@ fn art_upload_over_a_label_learned_at_boot_shows_the_new_label() {
     let (d, server) = start();
     let root = d.path();
     put(root, "Games/GBA/Gamma.gba", b"gamma-rom");
-    put(root, "Labels/GBA/Gamma.png", &solid_png(640, 330, [200, 10, 10]));
+    put(
+        root,
+        "Labels/GBA/Gamma.png",
+        &solid_png(640, 330, [200, 10, 10]),
+    );
     slot::label_cache::learn_stamps(root);
     let cart = slot_store::Cart {
         platform: Platform::Gba,
@@ -560,10 +636,21 @@ fn art_upload_over_a_label_learned_at_boot_shows_the_new_label() {
         code: String::new(),
         shell: None,
     };
-    assert_eq!(&slot::label_cache::label_art(root, &cart).unwrap()[..3], &[200, 10, 10]);
-    let (status, _) = call(server.port(), "POST", "/api/games/GBA/0/art?name=new.png", &solid_png(640, 330, [10, 10, 200]));
+    assert_eq!(
+        &slot::label_cache::label_art(root, &cart).unwrap()[..3],
+        &[200, 10, 10]
+    );
+    let (status, _) = call(
+        server.port(),
+        "POST",
+        "/api/games/GBA/0/art?name=new.png",
+        &solid_png(640, 330, [10, 10, 200]),
+    );
     assert_eq!(status, 200);
-    assert_eq!(&slot::label_cache::label_art(root, &cart).unwrap()[..3], &[10, 10, 200]);
+    assert_eq!(
+        &slot::label_cache::label_art(root, &cart).unwrap()[..3],
+        &[10, 10, 200]
+    );
     server.stop();
 }
 

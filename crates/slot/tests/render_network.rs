@@ -709,6 +709,95 @@ mod romm_pages {
     }
 
     #[test]
+    fn native_download_pages_show_the_installed_result() {
+        use slot::romm::api::{Library, LibraryRom, RomInfo};
+        for panel in [(1280, 720), (640, 480)] {
+            let (_d, mut f, mut c, _s) = setup().expect("headless renderer");
+            join_home(&mut f);
+            f.app_mut().romm.server = "romm.home.local".into();
+            f.app_mut().romm.device_id = Some("d1".into());
+            f.app_mut().romm.token = Some("t1".into());
+            let script = Script::default();
+            f.set_romm_jobs(Box::new(script.clone()));
+            open_row(&mut f, QuickRow::RommLibrary);
+            press(&mut f, Btn::A);
+            script.events.lock().unwrap().push(RommEvent::Library {
+                request: 1,
+                result: Ok(Library::default()),
+            });
+            settle(&mut f);
+            for (slug, label, file, shot_name) in [
+                ("pico", "PICO-8", "Cart.p8", "pico8"),
+                ("psx", "PS1", "Disc.chd", "ps1"),
+            ] {
+                press(&mut f, Btn::Left);
+                let request = match script.asked.lock().unwrap().last().unwrap() {
+                    RommJob::Library {
+                        request,
+                        slug: asked,
+                        ..
+                    } => {
+                        assert_eq!(asked, slug);
+                        *request
+                    }
+                    job => panic!("{job:?}"),
+                };
+                script.events.lock().unwrap().push(RommEvent::Library {
+                    request,
+                    result: Ok(Library {
+                        items: vec![LibraryRom {
+                            id: 42,
+                            name: "Authored test content".into(),
+                            info: RomInfo {
+                                platform_slug: slug.into(),
+                                fs_name: file.into(),
+                                files: vec![],
+                            },
+                        }],
+                        more: false,
+                    }),
+                });
+                fit(&mut f, &mut c, panel);
+                let screen = f.app().network_screen().unwrap();
+                assert_eq!(
+                    screen.lines[0].label,
+                    format!("{label} Library (Left/Right)")
+                );
+                assert_eq!(screen.lines[1].value, None);
+                let (px, size) = seen(&mut f, &mut c);
+                shot(&px, size, &format!("library-{shot_name}"));
+                press(&mut f, Btn::A);
+                let request = match script.asked.lock().unwrap().last().unwrap() {
+                    RommJob::Download { request, .. } => *request,
+                    job => panic!("{job:?}"),
+                };
+                script.events.lock().unwrap().push(RommEvent::Download {
+                    request,
+                    result: Ok(slot::romm::install::Finished {
+                        outcome: slot::romm::Outcome::Done,
+                        stem: Some(file.into()),
+                        platform: Some(if slug == "psx" {
+                            slot_store::Platform::Ps
+                        } else {
+                            slot_store::Platform::Pico8
+                        }),
+                    }),
+                });
+                settle(&mut f);
+                assert!(f
+                    .app()
+                    .network_screen()
+                    .unwrap()
+                    .lines
+                    .iter()
+                    .any(|line| line.label == "Installed"));
+                let (px, size) = seen(&mut f, &mut c);
+                shot(&px, size, &format!("library-{shot_name}-downloaded"));
+            }
+        }
+    }
+
+    #[test]
     fn the_romm_library_states_render() {
         use slot::romm::api::{Library, LibraryRom, RomInfo};
         for panel in [(1280, 720), (640, 480)] {
@@ -772,6 +861,44 @@ mod romm_pages {
             press(&mut f, Btn::A);
             let (px, size) = seen(&mut f, &mut c);
             shot(&px, size, "library-downloading");
+            for (name, progress) in [
+                (
+                    "known",
+                    slot::romm::api::DownloadProgress::Downloading {
+                        bytes: 768 * 1024 * 1024,
+                        total: Some(3 * 1024 * 1024 * 1024),
+                    },
+                ),
+                (
+                    "unknown",
+                    slot::romm::api::DownloadProgress::Downloading {
+                        bytes: 768 * 1024 * 1024,
+                        total: None,
+                    },
+                ),
+                ("installing", slot::romm::api::DownloadProgress::Installing),
+            ] {
+                script.events.lock().unwrap().push(RommEvent::Progress {
+                    request: request + 2,
+                    progress,
+                });
+                settle(&mut f);
+                let (px, size) = seen(&mut f, &mut c);
+                shot(&px, size, &format!("library-progress-{name}"));
+                assert!(region_ink(&px, size, [0.0, 60.0, size.0 as f32, 300.0]) > 500);
+            }
+            for (name, result) in [
+                ("failed", slot::romm::install::Stopped::Offline),
+                ("cancelled", slot::romm::install::Stopped::Cancelled),
+            ] {
+                script.events.lock().unwrap().push(RommEvent::Download {
+                    request: request + 2,
+                    result: Err(result),
+                });
+                settle(&mut f);
+                let (px, size) = seen(&mut f, &mut c);
+                shot(&px, size, &format!("library-progress-{name}"));
+            }
             script.events.lock().unwrap().push(RommEvent::Download {
                 request: request + 2,
                 result: Ok(slot::romm::install::Finished {

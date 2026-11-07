@@ -432,6 +432,98 @@ fn insert_stops_the_download() {
 }
 
 #[test]
+fn library_progress_has_real_totals_installation_retry_and_stale_event_guards() {
+    use slot::romm::api::{DownloadProgress, Library, LibraryRom, RomInfo};
+    let (_d, mut a, script) = paired_on_the_shelf();
+    open_at(&mut a, QuickRow::RommLibrary);
+    press(&mut a, Btn::A);
+    let request = match script.asked.lock().unwrap().last().unwrap() {
+        RommJob::Library { request, .. } => *request,
+        job => panic!("{job:?}"),
+    };
+    script.events.lock().unwrap().push(RommEvent::Library {
+        request,
+        result: Ok(Library {
+            items: vec![LibraryRom {
+                id: 42,
+                name: "Large Game".into(),
+                info: RomInfo {
+                    platform_slug: "psx".into(),
+                    fs_name: "Large.chd".into(),
+                    files: vec![],
+                },
+            }],
+            more: false,
+        }),
+    });
+    pump(&mut a);
+    press(&mut a, Btn::A);
+    let active = request + 1;
+    let progress = |bytes, total| RommEvent::Progress {
+        request: active,
+        progress: DownloadProgress::Downloading { bytes, total },
+    };
+    script
+        .events
+        .lock()
+        .unwrap()
+        .push(progress(768 * 1024 * 1024, Some(3 * 1024 * 1024 * 1024)));
+    pump(&mut a);
+    let screen = a.network_screen().unwrap();
+    assert_eq!(screen.lines[2].label, "Downloading; B: cancel");
+    assert_eq!(screen.lines[2].value.as_deref(), Some("25%"));
+    assert_eq!(screen.lines[3].label, "768.0 MiB / 3072.0 MiB");
+    script.events.lock().unwrap().push(progress(12345, None));
+    pump(&mut a);
+    let screen = a.network_screen().unwrap();
+    assert_eq!(screen.lines[2].value, None);
+    assert_eq!(screen.lines[3].label, "12345 B received; total unknown");
+    script.events.lock().unwrap().push(RommEvent::Progress {
+        request: active,
+        progress: DownloadProgress::Installing,
+    });
+    pump(&mut a);
+    assert_eq!(
+        a.network_screen().unwrap().lines[2].label,
+        "Installing; B: cancel"
+    );
+    script.events.lock().unwrap().push(RommEvent::Download {
+        request: active,
+        result: Err(slot::romm::install::Stopped::Offline),
+    });
+    pump(&mut a);
+    assert_eq!(
+        a.network_screen().unwrap().lines[2].label,
+        "Download failed; A: retry"
+    );
+    // A late snapshot cannot replace the terminal result or a later retry.
+    script
+        .events
+        .lock()
+        .unwrap()
+        .push(progress(999, Some(1000)));
+    pump(&mut a);
+    assert_eq!(
+        a.network_screen().unwrap().lines[2].label,
+        "Download failed; A: retry"
+    );
+    press(&mut a, Btn::A);
+    script
+        .events
+        .lock()
+        .unwrap()
+        .push(progress(999, Some(1000)));
+    pump(&mut a);
+    assert_eq!(
+        a.network_screen().unwrap().lines[3].label,
+        "0 B received; total unknown"
+    );
+    press(&mut a, Btn::B);
+    assert_eq!(a.quick_menu(), Some(QuickRow::RommLibrary));
+    assert_eq!(script.asked.lock().unwrap().last(), Some(&RommJob::Stop));
+}
+
+#[test]
 fn doze_stops_the_download_and_the_polls() {
     let (_d, mut a, script) = paired_on_the_shelf();
     a.apply(Action::LidClose);

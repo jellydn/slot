@@ -137,10 +137,17 @@ pub enum QuickRow {
     DeviceShutdown,
     DeviceLeds,
     RommLibrary,
+    GameX,
+    GameY,
+    GameL2,
+    GameR2,
+    PsController,
+    PsDisc,
+    Performance,
 }
 
 impl QuickRow {
-    pub const ALL: [QuickRow; 128] = [
+    pub const ALL: [QuickRow; 135] = [
         QuickRow::FastForward,
         QuickRow::FastForwardSound,
         QuickRow::Screen,
@@ -269,6 +276,13 @@ impl QuickRow {
         QuickRow::DeviceShutdown,
         QuickRow::DeviceLeds,
         QuickRow::RommLibrary,
+        QuickRow::GameX,
+        QuickRow::GameY,
+        QuickRow::GameL2,
+        QuickRow::GameR2,
+        QuickRow::PsController,
+        QuickRow::PsDisc,
+        QuickRow::Performance,
     ];
 
     pub const MAIN: [QuickRow; 7] = [
@@ -347,7 +361,7 @@ impl QuickRow {
         QuickRow::ShelfForget,
     ];
 
-    pub const CONTROLS: [QuickRow; 12] = [
+    pub const CONTROLS: [QuickRow; 16] = [
         QuickRow::GameUp,
         QuickRow::GameDown,
         QuickRow::GameLeft,
@@ -360,6 +374,10 @@ impl QuickRow {
         QuickRow::GameR,
         QuickRow::GameTurboA,
         QuickRow::GameTurboB,
+        QuickRow::GameX,
+        QuickRow::GameY,
+        QuickRow::GameL2,
+        QuickRow::GameR2,
     ];
 
     pub const SHORTCUTS: [QuickRow; 19] = [
@@ -425,7 +443,7 @@ impl QuickRow {
         QuickRow::GbStretch,
     ];
 
-    pub const GAME: [QuickRow; 8] = [
+    pub const GAME: [QuickRow; 11] = [
         QuickRow::FastForward,
         QuickRow::FastForwardSound,
         QuickRow::Rewind,
@@ -434,6 +452,9 @@ impl QuickRow {
         QuickRow::LeftStick,
         QuickRow::AutoLoad,
         QuickRow::EjectSave,
+        QuickRow::PsController,
+        QuickRow::PsDisc,
+        QuickRow::Performance,
     ];
 
     pub const PLAY: [QuickRow; 9] = [
@@ -514,7 +535,10 @@ impl QuickRow {
             | QuickRow::Rumble
             | QuickRow::LeftStick
             | QuickRow::AutoLoad
-            | QuickRow::EjectSave => &QuickRow::GAME,
+            | QuickRow::EjectSave
+            | QuickRow::PsController
+            | QuickRow::PsDisc
+            | QuickRow::Performance => &QuickRow::GAME,
             QuickRow::Wallpaper
             | QuickRow::WallpaperTint
             | QuickRow::DateTime
@@ -709,6 +733,9 @@ impl QuickRow {
             QuickRow::RommStatus => "Status",
             QuickRow::RommDisconnect => "Disconnect",
             QuickRow::RommLibrary => "Library",
+            QuickRow::PsController => "PS1 Controller",
+            QuickRow::PsDisc => "Disc",
+            QuickRow::Performance => "Performance HUD",
             QuickRow::Controls => "Controls",
             QuickRow::ControlsShelf => "Shelf",
             QuickRow::ControlsInGame => "In-Game",
@@ -725,7 +752,11 @@ impl QuickRow {
             | QuickRow::GameL
             | QuickRow::GameR
             | QuickRow::GameTurboA
-            | QuickRow::GameTurboB => self.game_button().map_or("", GameButton::label),
+            | QuickRow::GameTurboB
+            | QuickRow::GameX
+            | QuickRow::GameY
+            | QuickRow::GameL2
+            | QuickRow::GameR2 => self.game_button().map_or("", GameButton::label),
             QuickRow::ScSave
             | QuickRow::ScLoad
             | QuickRow::ScScreenshot
@@ -830,6 +861,10 @@ impl QuickRow {
             QuickRow::GameR => GameButton::R,
             QuickRow::GameTurboA => GameButton::TurboA,
             QuickRow::GameTurboB => GameButton::TurboB,
+            QuickRow::GameX => GameButton::X,
+            QuickRow::GameY => GameButton::Y,
+            QuickRow::GameL2 => GameButton::L2,
+            QuickRow::GameR2 => GameButton::R2,
             _ => return None,
         })
     }
@@ -939,10 +974,12 @@ pub enum QuickValue {
     Https,
     Http,
     Unavailable,
+    Digital,
+    DualShock,
 }
 
 impl QuickValue {
-    pub const ALL: [QuickValue; 51] = [
+    pub const ALL: [QuickValue; 53] = [
         QuickValue::Speed1_5,
         QuickValue::Speed2,
         QuickValue::Speed3,
@@ -994,6 +1031,8 @@ impl QuickValue {
         QuickValue::Https,
         QuickValue::Http,
         QuickValue::Unavailable,
+        QuickValue::Digital,
+        QuickValue::DualShock,
     ];
 
     pub const LEVELS: [QuickValue; 16] = [
@@ -1077,6 +1116,8 @@ impl QuickValue {
             QuickValue::Classic => "Classic",
             QuickValue::FullScreen => "Full Screen",
             QuickValue::Unavailable => "Unavailable",
+            QuickValue::Digital => "Digital",
+            QuickValue::DualShock => "DualShock",
             QuickValue::Mix => "Mix",
             QuickValue::Ghosting => "Ghosting",
             QuickValue::Https => "HTTPS",
@@ -1680,7 +1721,13 @@ impl QuickMenu<'_> {
                 continue;
             };
             let room = right - label_end - QUICK_VALUE_GAP;
-            let s = (room / (w as f32 - 2.0 * pad)).clamp(VALUE_MIN_SCALE, 1.0);
+            // Long disabled-state text must still fit beside the label on narrow panels.
+            let minimum = if self.values[row.index()] == Some(QuickValue::Unavailable) {
+                0.0
+            } else {
+                VALUE_MIN_SCALE
+            };
+            let s = (room / (w as f32 - 2.0 * pad)).clamp(minimum, 1.0);
             let (sw, sh) = (w as f32 * s, h as f32 * s);
             out.push(Draw::Tex {
                 x: (right - (w as f32 - pad) * s).round(),

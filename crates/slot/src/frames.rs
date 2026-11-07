@@ -2,6 +2,8 @@ use std::ops::Deref;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use slot_retro::FrameGeometry;
+
 pub struct Frames {
     inner: Mutex<Inner>,
     size: usize,
@@ -9,7 +11,7 @@ pub struct Frames {
 }
 
 struct Inner {
-    ready: Option<Vec<u8>>,
+    ready: Option<(Vec<u8>, FrameGeometry)>,
     spare: Vec<Vec<u8>>,
     allocated: usize,
 }
@@ -39,18 +41,23 @@ impl Frames {
     }
 
     pub fn publish(&self, buf: Vec<u8>) {
+        self.publish_frame(buf, FrameGeometry::default());
+    }
+
+    pub fn publish_frame(&self, buf: Vec<u8>, geometry: FrameGeometry) {
         let mut i = self.lock();
-        if let Some(dropped) = i.ready.replace(buf) {
+        if let Some((dropped, _)) = i.ready.replace((buf, geometry)) {
             i.spare.push(dropped);
         }
     }
 
     pub fn latest(self: &Arc<Self>) -> Option<FrameRef> {
-        let buf = self.lock().ready.take()?;
+        let (buf, geometry) = self.lock().ready.take()?;
         self.taken.fetch_add(1, Ordering::Relaxed);
         Some(FrameRef {
             frames: self.clone(),
             buf,
+            geometry,
         })
     }
 
@@ -78,6 +85,7 @@ impl Frames {
 pub struct FrameRef {
     frames: Arc<Frames>,
     buf: Vec<u8>,
+    pub geometry: FrameGeometry,
 }
 
 impl Deref for FrameRef {

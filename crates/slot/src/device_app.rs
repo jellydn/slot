@@ -235,6 +235,7 @@ pub fn run() {
         let swap_took = swap.elapsed();
         slot::latency::swapped(swap_took.as_secs_f64() * 1000.0);
         let dropped = pacer.swapped(work, swap_took > Duration::from_millis(1));
+        frontend.presented(work, swap_took, Some(dropped));
         if slot::latency::tracing() {
             frames += 1;
             missed += u32::from(dropped);

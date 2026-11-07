@@ -1,6 +1,6 @@
 use slot_input::{Action, Btn};
 use slot_retro::ButtonMask;
-use slot_store::{Controls, GameButton, Modifier};
+use slot_store::{Controls, GameButton, Modifier, Platform};
 
 use super::bind::device_btn;
 
@@ -25,9 +25,10 @@ impl Pad {
         }
     }
 
-    pub fn mask(&self, controls: &Controls) -> ButtonMask {
-        let bits = GameButton::ALL
-            .into_iter()
+    pub fn mask(&self, controls: &Controls, platform: Platform) -> ButtonMask {
+        let bits = GameButton::of(platform)
+            .iter()
+            .copied()
             .filter(|g| {
                 controls.game(*g).is_some_and(|binding| {
                     let b = device_btn(binding.button);
@@ -62,5 +63,9 @@ fn bit(g: GameButton) -> u16 {
         GameButton::R => ButtonMask::R,
         GameButton::TurboA => ButtonMask::X,
         GameButton::TurboB => ButtonMask::Y,
+        GameButton::X => ButtonMask::X,
+        GameButton::Y => ButtonMask::Y,
+        GameButton::L2 => ButtonMask::L2,
+        GameButton::R2 => ButtonMask::R2,
     }
 }

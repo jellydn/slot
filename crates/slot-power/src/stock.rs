@@ -8,18 +8,47 @@ use crate::{Battery, Charge, LedState, Platform};
 pub struct StockPlatform {
     root: PathBuf,
     battery: PathBuf,
+    #[cfg(target_os = "linux")]
+    display: Option<std::fs::File>,
 }
 
 impl StockPlatform {
     pub fn new(root: PathBuf) -> Self {
-        Self::probe(Path::new("/sys"), root)
+        let platform = Self::probe(Path::new("/sys"), root);
+        #[cfg(target_os = "linux")]
+        let platform = Self {
+            display: std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open("/dev/disp")
+                .ok(),
+            ..platform
+        };
+        platform
     }
 
     pub fn probe(sysfs: &Path, root: PathBuf) -> Self {
         Self {
             root,
             battery: sysfs.join("class/power_supply/axp2202-battery"),
+            #[cfg(target_os = "linux")]
+            display: None,
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn display_ioctl(&self, command: std::ffi::c_ulong, value: u32) -> Option<u32> {
+        use std::os::fd::AsRawFd;
+
+        extern "C" {
+            fn ioctl(fd: std::ffi::c_int, request: std::ffi::c_ulong, ...) -> std::ffi::c_int;
+        }
+
+        // sunxi disp2 takes four native unsigned longs; GET returns the value
+        // as the ioctl result, not in the argument buffer. Screen 0 is the LCD.
+        let args = [0, std::ffi::c_ulong::from(value), 0, 0];
+        let result = unsafe { ioctl(self.display.as_ref()?.as_raw_fd(), command, args.as_ptr()) };
+        u32::try_from(result).ok()
     }
 }
 
@@ -58,8 +87,35 @@ impl Platform for StockPlatform {
             .map_or(0, |d| d.as_secs() as i64)
     }
 
-    // Stock helpers retain ownership; do not write GPIO, debugfs, RTC or USB.
-    fn set_backlight(&mut self, _step: u8) {}
+    fn backlight_step(&self) -> Option<u8> {
+        #[cfg(target_os = "linux")]
+        {
+            let raw = self.display_ioctl(0x103, 0)?;
+            if raw > 255 {
+                return None;
+            }
+            (0..=10).min_by_key(|&step| crate::device::backlight_value(step, 255).abs_diff(raw))
+        }
+        #[cfg(not(target_os = "linux"))]
+        None
+    }
+
+    fn set_backlight(&mut self, step: u8) {
+        #[cfg(target_os = "linux")]
+        if self.backlight_step().is_some() {
+            let value = crate::device::backlight_value(step, 255);
+            if self.display_ioctl(0x102, value).is_none() {
+                eprintln!(
+                    "slot: stock backlight write failed: {}",
+                    std::io::Error::last_os_error()
+                );
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = step;
+    }
+
+    // Stock helpers retain ownership of GPIO, RTC and USB.
     fn set_led(&mut self, _state: LedState) {}
     fn set_rumble(&mut self, _strength: u16) {}
     fn set_clock(&mut self, _secs: i64) {}

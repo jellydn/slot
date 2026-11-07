@@ -72,7 +72,7 @@ enum Shape {
 
 pub fn folder_gb_shell(cart: &Cart) -> Option<GbShell> {
     match cart.platform {
-        Platform::Gba | Platform::Gbav => None,
+        Platform::Gba | Platform::Gbav | Platform::Ps | Platform::Pico8 => None,
         Platform::Gb | Platform::Gbc => Some(match cart.shell.map(|c| c.outline) {
             Some(Outline::Notched) => GbShell::Notched,
             Some(Outline::Rounded) => GbShell::Rounded,
@@ -95,7 +95,7 @@ pub fn shelf_shape(cart: &Cart) -> (Option<GbShell>, bool) {
     let shell = crate::shell::indexed_shell(cart);
     let outline = cart.shell.map(|c| c.outline);
     let shape = match (cart.platform, outline) {
-        (Platform::Gba | Platform::Gbav, _) => None,
+        (Platform::Gba | Platform::Gbav | Platform::Ps | Platform::Pico8, _) => None,
         (_, Some(Outline::Notched)) => Some(GbShell::Notched),
         (_, Some(Outline::Rounded)) => Some(GbShell::Rounded),
         _ => match slot_store::header_index::peek_gb_header(&cart.rom).flatten() {
@@ -109,7 +109,7 @@ pub fn shelf_shape(cart: &Cart) -> (Option<GbShell>, bool) {
 
 pub fn gb_shell_of(cart: &Cart) -> Option<GbShell> {
     match cart.platform {
-        Platform::Gba | Platform::Gbav => None,
+        Platform::Gba | Platform::Gbav | Platform::Ps | Platform::Pico8 => None,
         Platform::Gb | Platform::Gbc => Some(match cart.shell.map(|c| c.outline) {
             Some(Outline::Notched) => GbShell::Notched,
             Some(Outline::Rounded) => GbShell::Rounded,
@@ -178,14 +178,14 @@ const GB_SEATED_H: u32 = 259;
 
 pub fn seated_box(platform: Platform) -> (u32, u32) {
     match platform {
-        Platform::Gba | Platform::Gbav => (SEATED_W, SEATED_H),
+        Platform::Gba | Platform::Gbav | Platform::Ps | Platform::Pico8 => (SEATED_W, SEATED_H),
         Platform::Gb | Platform::Gbc => (SEATED_W, GB_SEATED_H),
     }
 }
 
 pub fn cart_box(platform: Platform) -> (u32, u32) {
     let s = spec(match platform {
-        Platform::Gba | Platform::Gbav => Shape::Gba,
+        Platform::Gba | Platform::Gbav | Platform::Ps | Platform::Pico8 => Shape::Gba,
         Platform::Gb | Platform::Gbc => Shape::Gb(GbShell::Notched),
     });
     (s.w, s.h)
