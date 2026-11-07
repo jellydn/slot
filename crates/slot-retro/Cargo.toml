@@ -5,5 +5,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+# Raw ABI access for the opt-in offscreen renderer diagnostic, not gameplay.
+host-probe = []
+
 [dependencies]
 libloading.workspace = true

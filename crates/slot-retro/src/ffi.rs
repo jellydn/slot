@@ -191,6 +191,9 @@ pub struct Api {
 }
 
 impl Api {
+    /// # Safety
+    /// `lib` must implement the libretro C ABI. Keep it loaded while calling
+    /// these pointers, and follow the core's threading and lifecycle contract.
     pub unsafe fn load(lib: &Library) -> Result<Self, CoreError> {
         macro_rules! get {
             ($name:literal) => {

@@ -13,6 +13,11 @@ mod mock;
 pub mod rtc;
 mod rumble;
 
+#[cfg(feature = "host-probe")]
+pub mod host_probe {
+    pub use crate::ffi::*;
+}
+
 pub use core::{AvInfo, ButtonMask, Controller, CoreError, FrameGeometry, RetroCore, GBA_H, GBA_W};
 pub use ffi::{
     NETPACKET_BROADCAST, NETPACKET_FLUSH_HINT, NETPACKET_RELIABLE, NETPACKET_UNRELIABLE,
