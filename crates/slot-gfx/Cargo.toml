@@ -11,6 +11,7 @@ host = ["dep:glutin", "dep:glutin-winit", "dep:winit", "dep:raw-window-handle"]
 device = []
 stock-tg5040 = ["device"]
 test-support = []
+host-hw-probe = ["dep:slot-retro", "dep:tempfile", "dep:png", "dep:serde_json"]
 
 [dependencies]
 gl = { workspace = true }
@@ -19,3 +20,12 @@ glutin = { workspace = true, optional = true }
 glutin-winit = { workspace = true, optional = true }
 raw-window-handle = { workspace = true, optional = true }
 winit = { workspace = true, optional = true }
+slot-retro = { path = "../slot-retro", optional = true, features = ["host-probe"] }
+tempfile = { workspace = true, optional = true }
+png = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+
+[[example]]
+name = "swan-hw-probe"
+path = "examples/swan-hw-probe.rs"
+required-features = ["host-hw-probe"]
