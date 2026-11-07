@@ -326,7 +326,7 @@ windows. Readback time includes GPU synchronisation, allocation and CPU
 orientation/alpha normalisation. Core wall time also includes the software
 frame-copy path in software mode. PNG writes are outside timed windows.
 
-### Prepared Linux GLES gate — execution needs separate approval
+### Linux GLES diagnostic and executed stock gate
 
 The same authored assertions now compile for AArch64 Linux. The example's
 private `egl.rs` loads installed EGL/GLES dynamically, requests ES3.2 and a
@@ -374,7 +374,7 @@ Prepared Linux executable SHA256 is
 `1a192596bffd2214f679eb14630057961bdc7b907684c384793d187866b72eb7`.
 No actual Linux driver/core run is implied by these host checks.
 
-Proposed next target scope: refuse an existing
+The owner separately approved and consumed this exact target scope: refuse an existing
 `/tmp/slot-swan-gles-20261107/`; copy only the reviewed executable, unchanged
 pinned Swan runtime and generated `authored.m3u`, `first.cue/.bin`,
 `second.cue/.bin` plus hash manifest. Run one diagnostic process from that root,
@@ -384,8 +384,46 @@ silence, real disc reads and card counters 1/2/3. Read back evidence to the host
 then remove only the created root and independently verify absence. No user
 games/BIOS/cards, SD, settings/services, presentation, physical input, sound
 output, power changes or performance benchmark. Fresh unique stock identity
-and input hashes are required. The prior capability probe approval is consumed;
-**this new core execution is not yet approved or performed**.
+and input hashes were checked. Both the earlier capability approval and this
+one core-test approval are consumed; neither authorises another execution.
+
+#### Stock Swan GLES result — compatibility passes, not speed acceptance
+
+On 7 November 2026, exactly one 300-second-alarmed process completed
+Software → GLES → GLES with exit 0, using the reviewed executable and unchanged
+pinned Swan runtime. Fresh unique target identity matched TinaLinux 4.9.191
+#899, Neptune `5C1C9C53`, `a133-aw3/generic v1.0`, firmware `1.1.1` and the
+four installed graphics-library hashes from the capability check. The actual
+context reported Imagination / PowerVR Rogue GE8300 / GLES 3.2 build
+`1.19@6345021`. The target root was new; HOME, TMPDIR and cache/output roots
+were confined to that disposable directory.
+
+- All three lifecycles produced 2787 fresh 320×224 frames. Each hardware
+  lifecycle used hardware callbacks for all 2787; no software fallback passed.
+- All six authored states passed: red idle, green RIGHT with nonzero generated
+  audio energy, red/silent release, and yellow/blue/yellow disc 0→1→0 reads.
+  Whole readback images matched software within the documented ≤4/channel
+  quantisation tolerance. This exercises the fixture's shaders, not every
+  Swan shader variant or a commercial game.
+- Each disposable 128 KiB card was fsynced/reopened and passed the counter
+  assertion 1/2/3 across core lifecycles. No state API or user card was used.
+- Detach, context destruction, surface destruction and EGL termination all
+  reported success for every lifecycle. The alarm did not end the process.
+- Independent host readback matched all eight input and 22 output hashes,
+  decoded/compared all 18 PNGs, checked the three cards and rechecked report
+  counts/audio assertions. Final hardware idle/RIGHT/disc-0/disc-1 captures
+  were visually inspected. Only the created target root was removed; a
+  separate later ADB query confirmed both directory and symlink absence.
+
+Report SHA256:
+`00c41fd013c4e0c433aaffeec9d1df6c9fe6f06a4a05207eecf04b072f5113fb`.
+Streamed runtime log SHA256:
+`a8344664ca538578866c08e282c54051e9c589c53671b899a7f44df7d8ffcefe`.
+Private receipts and readbacks remain under
+`.amp/in/stock-swan-gles-20261107/`, including `verification.txt` and
+`cleanup-independent.txt`. No user games/BIOS/cards/settings/SD/services were
+accessed; no window/swap, physical input, sound-device output, performance
+benchmark or production renderer ran. No graphics driver was distributed.
 
 ### Executed stock capability gate — not Swan core acceptance
 
@@ -438,17 +476,18 @@ Receipts are under `.amp/in/swan-hw-probe/`. Final `run-7/report.json` SHA256:
 No upload/compositor/presentation/audio-device cost is measured: this diagnostic
 does not run Slot's worker/menu path.
 
-The basic stock Tina GLES3/pbuffer/RGBA8/depth32F gate now passes. Swan's
-actual vendor shaders/core lifecycles, context loss, worker/compositor
-integration, sustained target timing and thermal behaviour remain unverified.
+The basic stock Tina GLES3/pbuffer/RGBA8/depth32F gate and Swan's authored
+offscreen GLES lifecycles now pass. Other shader/content paths, context loss,
+worker/compositor integration, presentation, sound-device behaviour, sustained
+target timing and thermal behaviour remain unverified.
 The saved ES3.2 GE8300 report is from **KNULLI**, not stock Tina. Do not use it
 as stock acceptance. PCSX's separate GLES1 plugin still needs a distinct port;
 this Swan diagnostic does not make both cores hardware-capable. Shared-texture
 transport/fences or a production renderer require another architecture decision.
 Production feasibility: a worker-owned offscreen context and bounded CPU
 readback can retain the current frame contract, but does not establish a speed
-win. First validate the actual GLES core; then decide whether to integrate that
-opt-in readback path or approve a shared-texture/fence design. The latter needs
+win. The next decision is whether to integrate that opt-in readback path or
+approve a shared-texture/fence design. The latter needs
 new frame ownership, synchronisation, resize/context-loss and compositor
 compatibility contracts; do not implement it as an implicit option toggle.
 No new package, SD update or default-core change follows from this diagnostic.

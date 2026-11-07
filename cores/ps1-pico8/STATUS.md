@@ -3,8 +3,9 @@
 Test.9 is an owner-test milestone, **not hardware accepted or a stable release**.
 The owner now authorises atomic branch pushes, updates to draft PR #5 and a
 verified prerelease when ready, not a merge or SD deployment. A separately
-approved stock capability probe has completed; its one execution permission
-does not authorise further device/core tests or performance profiling.
+approved stock capability probe and one Swan offscreen GLES compatibility
+process have completed. Both execution permissions are consumed; neither
+authorises further device/core tests or performance profiling.
 
 ## Done and still limited
 
@@ -55,23 +56,27 @@ does not authorise further device/core tests or performance profiling.
   RGBA8/depth32F FBO passed all asymmetric readback pixels with no GL errors.
   Normal EGL cleanup and independent temporary-directory removal checks passed.
   This is stock Tina evidence, separate from earlier KNULLI evidence.
-- `swan-hw-probe` also prepares a Linux EGL/GLES compatibility path. It is
+- `swan-hw-probe` passes the separately approved stock Linux EGL/GLES gate. It is
   diagnostic-only, not production rendering. It has a 300-second alarm, no
   window/swap API, private diagnostic cards/BIOS/cache roots and no Linux
-  timing benchmark. **No Swan core has been run on the stock GPU.**
-- Next live gate needs exact new approval: a fresh
-  `/tmp/slot-swan-gles-20261107/`, the reviewed diagnostic, pinned Swan runtime,
-  authored two-disc fixture, private output/cache/cards, one bounded process,
-  host evidence readback and cleanup. No user data, SD, audio-device output,
-  display takeover or service/settings changes.
+  timing benchmark. One process completed Software → GLES → GLES on GE8300:
+  2787/2787 fresh frames used hardware callbacks in each hardware lifecycle;
+  input-driven images/audio samples/silence, disc reads and card counters
+  1/2/3 passed. All 18 full images matched software within ≤4/channel.
+  Independent readback verified 30 file hashes and three cards. All three
+  normal EGL teardowns passed; a separate USB query confirmed the temporary
+  root absent. No user data, SD, audio-device output, display takeover or
+  service/settings changes. See [exact scope and report hash](SWANSTATION.md#stock-swan-gles-result--compatibility-passes-not-speed-acceptance).
 - Production still selects Swan Software. A worker-owned context/FBO with
-  bounded readback could preserve the CPU-frame transport, but needs actual
-  core/GLES correctness and Slot worker/menu/lifecycle acceptance first.
+  bounded readback could preserve the CPU-frame transport, but needs a
+  production design decision and Slot worker/menu/lifecycle acceptance first.
+  Other shader/content paths, presentation, audio-device quality, context
+  loss, sustained target speed and thermals remain unverified.
   Shared-texture/fence transport is a larger design checkpoint, not approved
   by stock extension strings. PCSX's legacy GLES1 plugin requires a separate
   renderer port; keep the NEON software baseline/default unchanged.
 - Do not publish an incomplete hardware-rendering milestone as finished PS1
-  work. The combined prerelease remains gated on the remaining compatibility,
+  work. The combined prerelease remains gated on production compatibility,
   integration and package/source/licence/readback checks. Stable 0.2 assets,
   frozen test snapshots and installed user data must stay unchanged.
 
