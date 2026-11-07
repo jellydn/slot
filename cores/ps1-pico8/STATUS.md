@@ -7,6 +7,12 @@ approved stock capability probe and one Swan offscreen GLES compatibility
 process have completed. Both execution permissions are consumed; neither
 authorises further device/core tests or performance profiling.
 
+The owner now requests a prerelease of the completed **software milestone**,
+without waiting for hardware-renderer integration. It must be labelled
+experimental and retain the current defaults and save safeguards. Publishing
+that milestone is not PS1 performance acceptance or permission to attach Swan
+to shared transport. TSP and SD remain unchanged.
+
 ## Done and still limited
 
 - Native PS1/PICO-8 shelves, bounded disc references, software frame geometry,
@@ -75,10 +81,27 @@ authorises further device/core tests or performance profiling.
   Shared-texture/fence transport is a larger design checkpoint, not approved
   by stock extension strings. PCSX's legacy GLES1 plugin requires a separate
   renderer port; keep the NEON software baseline/default unchanged.
-- Do not publish an incomplete hardware-rendering milestone as finished PS1
-  work. The combined prerelease remains gated on production compatibility,
-  integration and package/source/licence/readback checks. Stable 0.2 assets,
-  frozen test snapshots and installed user data must stay unchanged.
+- Host-only C and Rust surfaceless transport proofs now pass independently on
+  Mesa22.3.6/llvmpipe. Each full run covers101 sessions,15539 whole-image checks,
+  12610 publications,3333 intentional drops,10 simulated losses and24998
+  balanced sync objects. The C runner rejects8 fault controls; Rust rejects9,
+  including deliberately restoring the late-frame rewind bug. Rust also checks
+  partial startup, caught authored panics and early return with a live worker,
+  held lease and full pool. These are synthetic diagnostics, not Swan transport
+  integration, real context loss, window compatibility or speed evidence.
+- The Rust example uses one shared display owner, thread-confined contexts and
+  local GL dispatch. A lease needs an explicit flushed consumer fence; failed
+  sessions invalidate and stop instead of silently recycling or relaunching.
+  Both actual host contexts are GLES3.2, not proof of strict actual ES2/ES3
+  mixing. The three publication textures plus stable target use a fixed8MiB
+  colour pool and one GPU blit; this is not zero-copy. No real core is attached.
+  See [host reproduction and limits](../../crates/slot-gfx/examples/swan-hw-probe/TRANSPORT-HOST.md).
+- Stop for review before the authored Swan shared-context lifecycle gate.
+  Do not publish incomplete hardware-rendering work as finished PS1 support.
+  A software-only prerelease can proceed after fresh package/source/licence
+  and independent downloaded-asset checks. Stable0.2 assets, frozen test
+  snapshots and installed user data must stay unchanged. Shared transport
+  diagnostics are source-only and excluded from the install runtime.
 
 Owner-controlled A/B: use the same legal disc, region, scene, display/audio
 settings and controller mode; record the exact core and settings; compare
