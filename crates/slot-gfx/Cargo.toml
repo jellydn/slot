@@ -29,3 +29,8 @@ serde_json = { workspace = true, optional = true }
 name = "swan-hw-probe"
 path = "examples/swan-hw-probe.rs"
 required-features = ["host-hw-probe"]
+
+[[example]]
+name = "transport-host-rust"
+path = "examples/swan-hw-probe/transport-host.rs"
+required-features = ["host-hw-probe"]
