@@ -6,8 +6,9 @@ routing. Host checks and a combined FAT32 test package are separate from
 handheld acceptance, which remains pending. See [the test checklist](TEST-CHECKLIST.md).
 
 **Latest status:** test.9 was installed with separate owner approval, verified
-backup/readback and normal safe eject. The owner now reports PICO still does
-not work (exact failing action unknown), and Swan is a bit better but at
+backup/readback and normal safe eject. The owner clarified that PICO Fetch
+Box Art fails for PNG carts named `.p8`; the source correction is verified.
+Swan is a bit better but at
 30–40 fps with choppy audio (game/scene/metric unconfirmed). Neither platform
 has full hardware acceptance. See [current status and provenance](STATUS.md).
 This draft work makes no new SD/device change or stable release.
@@ -24,6 +25,21 @@ grey vents/rings for PS1 and muted teal/coral pixel geometry for PICO-8. They
 are generated under Slot's licence, with no downloaded art, marks or textures.
 None and custom PNG remain selectable. Native bezel textures use the actual
 panel size, avoiding a 720×480 cover-crop before display on a 1280×720 panel.
+
+## Test.10: completed software milestone, not GPU integration
+
+This experimental prerelease candidate rebuilds the frontend with PNG-signature
+detection for `.p8` carts. Custom labels are preserved. It retains the pinned
+test.9 core bytes, PCSX NEON default, optional Swan Software, isolated cards
+and disabled Swan states/resume/rewind. It does not fix the reported Swan
+30–40 fps/choppy audio or establish handheld performance acceptance.
+
+C and independent Rust synthetic shared-texture/fence diagnostics are supplied
+as source only. No Swan is attached to that transport; the production
+compositor is unchanged. Their llvmpipe surfaceless passes do not prove window
+compatibility, strict ES2/ES3 sharing, hardware GPU cost or target speed.
+See [the host reproduction and limits](../../crates/slot-gfx/examples/swan-hw-probe/TRANSPORT-HOST.md).
+Publication does not authorise an SD update, device test or stable replacement.
 
 ## Test.9: optional SwanStation offline comparison milestone
 

@@ -12,7 +12,7 @@ import tarfile
 import zipfile
 from pathlib import Path
 
-VERSION = "stock-tsp-0.3.0-test.9"
+VERSION = "stock-tsp-0.3.0-test.10"
 BASE = "7d14cc6c9b4017a5dc2739c5ea54279a70f7a14b"
 IMAGE = "rust@sha256:4730e387a220a08a365c77da3096544dde214f9d796c16284d4be45438cad4a9"
 SWAN_COMMIT = "631f0fb31b809e0f889d7c551fe695788e39c1d3"
@@ -233,11 +233,7 @@ def main():
         "PS1/fake-08/RomM test candidate; hardware acceptance pending."
     )
     write(config, value)
-    frontend_files = (
-        git(repo, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
-        .decode()
-        .split("\0")
-    )
+    frontend_files = git(repo, "ls-files", "--cached", "-z").decode().split("\0")
     frontend, omitted_frontend = [], []
     for name in sorted(set(filter(None, frontend_files))):
         if name.startswith(".amp/") or "__pycache__" in Path(name).parts:
@@ -312,7 +308,7 @@ def main():
         "version": VERSION,
         "hardware_accepted": False,
         "source_checkpoint": git(repo, "rev-parse", "HEAD").decode().strip(),
-        "source_is_uncommitted_snapshot": True,
+        "source_is_uncommitted_snapshot": bool(git(repo, "diff", "HEAD", "--")),
         "fork_baseline": BASE,
         "wifi_handoff_fix_included": "0f486802b4283a0ca831a053445ae1e7cffa88f8",
         "frontend_source": "Sources/combined-frontend-source.tar.gz",
